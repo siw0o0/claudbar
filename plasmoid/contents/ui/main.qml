@@ -140,6 +140,21 @@ PlasmoidItem {
             root.now = Date.now();
         }
     }
+    // Opens the session's chat in the Claude desktop app. The app's deep link takes its own id
+    // (local_…), found by the session file that holds our CLI session id; runs only on a click.
+    // Terminal sessions have no such file, and nothing opens.
+    P5Support.DataSource {
+        id: launcher
+        engine: "executable"
+        onNewData: (source, data) => disconnectSource(source)
+    }
+    function openChat(id) {
+        if (!/^[0-9a-f-]{36}$/.test(id || "")) return;
+        launcher.connectSource("f=$(grep -rlE --include='local_*.json' '\"cliSessionId\": *\"" + id + "\"' \"$HOME/.config/Claude/claude-code-sessions\" 2>/dev/null | head -1); "
+            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\"; true");
+        root.expanded = false;
+    }
+
     // One awk process per read: each file as one JSON line.
     function readFiles() { exec.connectSource("awk 1 '" + dir + "'/sessions/*.json '" + dir + "/usage.json' 2>/dev/null"); }
     // Once at start: remove session files older than a week.
@@ -292,7 +307,7 @@ PlasmoidItem {
             Item { Layout.fillWidth: true }
             PlasmaComponents3.Label {
                 visible: root.listed.length > 0
-                text: root.picked !== "" && !!root.lead && root.lead.id === root.picked ? T.tr("pinned · click to unpin") : T.tr("click to pin")
+                text: T.tr("click to open the chat")
                 opacity: 0.55
                 font: Kirigami.Theme.smallFont
             }
@@ -307,16 +322,17 @@ PlasmoidItem {
                 readonly property real unit: Kirigami.Units.gridUnit
                 Layout.fillWidth: true
                 Layout.preferredHeight: unit * 1.7
+                readonly property bool pinned: root.picked !== "" && root.picked === item.id
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.pick(item.id)
+                onClicked: root.openChat(item.id)
 
                 Rectangle {
                     anchors.fill: parent
                     radius: Kirigami.Units.cornerRadius
                     color: Kirigami.Theme.highlightColor
                     opacity: entry.current ? 0.22 : entry.containsMouse ? 0.1 : 0
-                    border.width: entry.current && root.picked === entry.item.id ? 1 : 0
+                    border.width: entry.pinned ? 1 : 0
                     border.color: Kirigami.Theme.highlightColor
                 }
                 PlasmaComponents3.ToolTip { text: entry.item.project + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
@@ -376,7 +392,19 @@ PlasmoidItem {
                         font: Kirigami.Theme.smallFont
                         opacity: 0.8
                     }
-                    // Always in the layout, visible only under the cursor: the row keeps its width.
+                    // Buttons stay in the layout and only fade in, so the row keeps its width.
+                    PlasmaComponents3.ToolButton {
+                        icon.name: "window-pin"
+                        display: PlasmaComponents3.AbstractButton.IconOnly
+                        text: entry.pinned ? T.tr("Unpin from the panel") : T.tr("Pin to the panel")
+                        checkable: true
+                        checked: entry.pinned
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2
+                        Layout.preferredHeight: Layout.preferredWidth
+                        opacity: entry.pinned || entry.containsMouse || hovered ? 1 : 0
+                        onClicked: root.pick(entry.item.id)
+                        PlasmaComponents3.ToolTip { text: parent.text }
+                    }
                     PlasmaComponents3.ToolButton {
                         icon.name: "edit-rename"
                         display: PlasmaComponents3.AbstractButton.IconOnly
