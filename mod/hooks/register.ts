@@ -22,6 +22,13 @@ type Session = {
 // Reset on a module reload; the next event fills it in again.
 let session: Session | null = null
 
+// The turn put a question to the user (the desktop app's wrap-up box asks one), so when it ends
+// the session waits for an answer rather than being done.
+let asking = false
+
+// Tools that stop the turn until the user answers.
+const questions = new Set(['AskUserQuestion', 'ExitPlanMode'])
+
 const cache = async ($: EngineInterface) => `${(await $.env.get('HOME')) ?? '/tmp'}/.cache/claudbar`
 
 type Limit = { kind: string; percent: number; resetsAt: string | null }
@@ -90,8 +97,9 @@ const measure = async ($: EngineInterface) => {
 }
 
 // After the permission decision the tool either ran or was refused: the session works again.
+// A question at the end of a turn names no tool and waits past it.
 const resume = async ($: EngineInterface) => {
-  if (session?.state === 'waiting') await mark($, { state: 'working' })
+  if (session?.state === 'waiting' && session.tool) await mark($, { state: 'working' })
 }
 
 export const register: Register = on => {
@@ -115,18 +123,32 @@ export const register: Register = on => {
 
   // Only the main loop drives the state; subagents do not.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) await mark($, { state: 'working', tool: null })
+    if (e.agentId === undefined) {
+      asking = false
+      await mark($, { state: 'working', tool: null })
+    }
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (e.agentId === undefined) await mark($, { state: 'idle', tool: null })
+    if (e.agentId === undefined) {
+      const question = e.reason === 'answer' && (asking || /\?\s*$/.test(e.answer))
+      await mark($, { state: question ? 'waiting' : 'idle', tool: null })
+    }
     return done
   })
 
   on('tool.call', async ($, e, next) => {
-    if (e.agentId === undefined) await mark($, { state: 'working', tool: e.tool })
+    if (e.agentId === undefined) {
+      // The app shows the wrap-up question as soon as it is asked, while the closing text still streams.
+      if (e.tool === 'mcp__ccd_turn__wrap_up' && (e as { ask?: unknown }).ask) {
+        asking = true
+        await mark($, { state: 'waiting', tool: null })
+      } else {
+        await mark($, { state: questions.has(e.tool) ? 'waiting' : 'working', tool: e.tool })
+      }
+    }
     return next(e)
   })
 

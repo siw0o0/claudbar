@@ -25,7 +25,7 @@ PlasmoidItem {
     readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - s.at < 600000)
     readonly property var order: ({ waiting: 0, working: 1, idle: 2 })
     readonly property var sessions: running ? alive.slice().sort((a, b) => (order[a.state] - order[b.state]) || (b.at - a.at)) : []
-    // A session picked by a click; otherwise the most urgent one (approval, work, latest).
+    // A session picked by a click; otherwise the most urgent one (waiting, work, latest).
     property string picked: ""
     readonly property var lead: sessions.find(s => s.id === picked) || (sessions.length ? sessions[0] : null)
     // Dots: working and waiting always, finished ones for 5 minutes, the latest finished one stays.
@@ -198,7 +198,9 @@ PlasmoidItem {
     }
     function ago(ms) { return ms < 60000 ? span(ms) : T.tr("%1 ago", span(ms)); }
     function stateText(s) {
-        if (s.state === "waiting") return T.tr("waiting for approval") + (s.tool ? " · " + s.tool : "");
+        // A permission prompt names its tool; a question at the end of a turn names none.
+        if (s.state === "waiting") return s.tool && s.tool !== "AskUserQuestion" && s.tool !== "ExitPlanMode"
+            ? T.tr("waiting for approval") + " · " + s.tool : T.tr("waiting for you");
         if (s.state === "working") return T.tr("working") + (s.tool ? " · " + s.tool : "") + " · " + span(now - s.since);
         return T.tr("done") + " · " + ago(now - s.since);
     }

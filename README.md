@@ -10,8 +10,8 @@ A KDE Plasma 6 panel widget that shows what your Claude Code sessions are doing:
 
 ## What it shows
 
-- **Dots**: one per session. Blue means working, orange (blinking) means waiting for your approval, green means done. Finished sessions fade out after 5 minutes; the latest one stays. Click a dot to show that session on the panel.
-- **The session on the panel**: its name, state and current tool (`working · Bash · 2 min`), context window usage and cost. By default it shows the most urgent session (approval, then work, then the latest).
+- **Dots**: one per session. Blue means working, orange (blinking) means waiting for you (a permission prompt, or a question the session asked), green means done. Finished sessions fade out after 5 minutes; the latest one stays. Click a dot to show that session on the panel.
+- **The session on the panel**: its name, state and current tool (`working · Bash · 2 min`), context window usage and cost. By default it shows the most urgent session (waiting, then working, then the latest).
 - **Limits**: the plan's 5-hour and weekly usage with time to reset.
 - **The list** (click the bar): sessions active in the last 10 minutes, at least 3. Click a row to open that chat in the Claude desktop app (through its `claude://code/continue` link, handed straight to the running app, so it switches at once; terminal sessions have no chat to open). If the app is minimized, KWin brings its window back and focuses it. The buttons on the right of a row pin the session to the panel (click again to unpin) and give it a short name. The **Compact** switch at the bottom hides the bars on the panel and keeps only the percentages (coloured when they pass 80%).
 

@@ -6,6 +6,7 @@ var catalogs = {
         "No active session": "Brak aktywnej sesji",
         "no session": "bez sesji",
         "waiting for approval": "czeka na zgodę",
+        "waiting for you": "czeka na ciebie",
         "working": "pracuje",
         "done": "gotowe",
         "now": "teraz",
