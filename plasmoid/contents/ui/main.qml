@@ -140,18 +140,21 @@ PlasmoidItem {
             root.now = Date.now();
         }
     }
-    // Opens the session's chat in the Claude desktop app. The app's deep link takes its own id
-    // (local_…), found by the session file that holds our CLI session id; runs only on a click.
-    // Terminal sessions have no such file, and nothing opens.
+    // Opens the session's chat in the Claude desktop app; runs only on a click. open.py hands the
+    // deep link straight to the running app (no second app instance to start). Without python3
+    // the shell finds the session and uses xdg-open, which is slower. Terminal sessions have no
+    // chat in the app, and nothing opens.
     P5Support.DataSource {
         id: launcher
         engine: "executable"
         onNewData: (source, data) => disconnectSource(source)
     }
+    readonly property string openScript: Qt.resolvedUrl("../code/open.py").toString().replace("file://", "")
     function openChat(id) {
         if (!/^[0-9a-f-]{36}$/.test(id || "")) return;
-        launcher.connectSource("f=$(grep -rlE --include='local_*.json' '\"cliSessionId\": *\"" + id + "\"' \"$HOME/.config/Claude/claude-code-sessions\" 2>/dev/null | head -1); "
-            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\"; true");
+        launcher.connectSource("if command -v python3 >/dev/null; then python3 -I '" + openScript + "' " + id + "; else "
+            + "f=$(grep -rlE --include='local_*.json' '\"cliSessionId\": *\"" + id + "\"' \"$HOME/.config/Claude/claude-code-sessions\" 2>/dev/null | head -1); "
+            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\"; fi; true");
         root.expanded = false;
     }
 
