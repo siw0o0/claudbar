@@ -395,17 +395,10 @@ PlasmoidItem {
         Layout.maximumWidth: fit
         spacing: Kirigami.Units.smallSpacing
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.bottomMargin: Kirigami.Units.smallSpacing
-            PlasmaComponents3.Label { text: root.listed.length ? T.tr("Sessions · %1", root.listed.length) : T.tr("No active session"); font.bold: true }
-            Item { Layout.fillWidth: true }
-            PlasmaComponents3.Label {
-                visible: root.listed.length > 0
-                text: T.tr("click to open the chat")
-                opacity: 0.55
-                font: Kirigami.Theme.smallFont
-            }
+        PlasmaComponents3.Label {
+            visible: root.listed.length === 0
+            text: T.tr("No active session")
+            opacity: 0.6
         }
         Repeater {
             model: root.listed.length
@@ -526,32 +519,6 @@ PlasmoidItem {
                 Bar { Layout.fillWidth: true; value: item.percent || 0; color: root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) }
                 PlasmaComponents3.Label { text: (item.percent || 0) + "%"; font.bold: true; Layout.preferredWidth: Kirigami.Units.gridUnit * 1.8; horizontalAlignment: Text.AlignRight }
                 PlasmaComponents3.Label { text: root.resetIn(item); Layout.preferredWidth: Kirigami.Units.gridUnit * 4.2; font: Kirigami.Theme.smallFont; opacity: 0.6 }
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.smallSpacing
-            PlasmaComponents3.Label {
-                Layout.fillWidth: true
-                text: root.usage ? T.tr("Limits read %1", root.ago(root.now - root.usage.at)) + (root.cost > 0 ? " · " + T.tr("total %1", root.usd(root.cost)) : "") : ""
-                elide: Text.ElideRight
-                opacity: 0.5
-                font: Kirigami.Theme.smallFont
-            }
-            PlasmaComponents3.Label { text: T.tr("Width"); font: Kirigami.Theme.smallFont; opacity: 0.7 }
-            // Applies when released, so the panel does not resize on every step of the drag.
-            PlasmaComponents3.Slider {
-                Layout.preferredWidth: Kirigami.Units.gridUnit * 5
-                from: Math.ceil(root.minBar / Kirigami.Units.gridUnit / 2) * 2; to: 80; stepSize: 2; snapMode: PlasmaComponents3.Slider.SnapAlways
-                value: Plasmoid.configuration.width
-                onPressedChanged: if (!pressed) Plasmoid.configuration.width = value
-                PlasmaComponents3.ToolTip { text: T.tr("Width of the bar on the panel"); visible: parent.hovered }
-            }
-            PlasmaComponents3.Switch {
-                text: T.tr("Compact")
-                font: Kirigami.Theme.smallFont
-                checked: Plasmoid.configuration.compact
-                onToggled: Plasmoid.configuration.compact = checked
             }
         }
     }
