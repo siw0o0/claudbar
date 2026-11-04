@@ -10,10 +10,11 @@ A KDE Plasma 6 panel widget that shows what your Claude Code sessions are doing:
 
 ## What it shows
 
-- **Dots**: one per session. Blue means working, orange (blinking) means waiting for you (a permission prompt, or a question the session asked), green means done. Finished sessions fade out after 5 minutes; the latest one stays. Click a dot to show that session on the panel.
+- **Dots**: one per session. Blue means working, orange (blinking) means waiting for you (a permission prompt, or a question the session asked), green means done. Finished sessions fade out after 5 minutes; the latest one stays.
 - **The session on the panel**: its name, state and current tool (`working · Bash · 2 min`), context window usage and cost. By default it shows the most urgent session (waiting, then working, then the latest).
 - **Limits**: the plan's 5-hour and weekly usage with time to reset.
-- **The list** (click the bar): sessions active in the last 10 minutes, at least 3. Click a row to open that chat in the Claude desktop app (through its `claude://code/continue` link, handed straight to the running app, so it switches at once; terminal sessions have no chat to open). If the app is minimized, KWin brings its window back and focuses it. The buttons on the right of a row pin the session to the panel (click again to unpin) and give it a short name. The **Compact** switch at the bottom hides the bars on the panel and keeps only the percentages (coloured when they pass 80%).
+- **A click on the bar**: while a session waits for you, it opens that chat in the Claude desktop app right away (the pinned session if it is the one waiting, else the latest waiting one). Otherwise, or when the waiting session has no chat in the app (a terminal session), it opens the list.
+- **The list**: sessions active in the last 10 minutes, at least 3. Click a row to open that chat in the Claude desktop app (through its `claude://code/continue` link, handed straight to the running app, so it switches at once; terminal sessions have no chat to open). If the app is minimized, KWin brings its window back and focuses it. The buttons on the right of a row pin the session to the panel (click again to unpin) and give it a short name. The **Compact** switch at the bottom hides the bars on the panel and keeps only the percentages (coloured when they pass 80%).
 
 Session names come from the conversation's title (its first meaningful word), or the project folder when there is no title yet.
 

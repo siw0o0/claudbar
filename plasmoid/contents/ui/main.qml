@@ -25,7 +25,7 @@ PlasmoidItem {
     readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - s.at < 600000)
     readonly property var order: ({ waiting: 0, working: 1, idle: 2 })
     readonly property var sessions: running ? alive.slice().sort((a, b) => (order[a.state] - order[b.state]) || (b.at - a.at)) : []
-    // A session picked by a click; otherwise the most urgent one (waiting, work, latest).
+    // A session pinned in the list; otherwise the most urgent one (waiting, work, latest).
     property string picked: ""
     readonly property var lead: sessions.find(s => s.id === picked) || (sessions.length ? sessions[0] : null)
     // Dots: working and waiting always, finished ones for 5 minutes, the latest finished one stays.
@@ -154,16 +154,35 @@ PlasmoidItem {
         engine: "executable"
         onNewData: (source, data) => {
             disconnectSource(source);
-            if (String(data["stdout"]).indexOf("opened") >= 0) root.raiseClaude();
+            var opened = String(data["stdout"]).indexOf("opened") >= 0;
+            if (opened) root.raiseClaude();
+            // A click on the panel that found no chat to open (a terminal session, a session the
+            // app no longer has) shows the list instead.
+            else if (source === root.fromPanel) root.expanded = true;
+            if (source === root.fromPanel) root.fromPanel = "";
         }
     }
+    property string fromPanel: ""
+    // If the opener never answers, the panel is not left waiting for it.
+    Timer { interval: 5000; running: root.fromPanel !== ""; onTriggered: root.fromPanel = "" }
     readonly property string openScript: Qt.resolvedUrl("../code/open.py").toString().replace("file://", "")
-    function openChat(id) {
-        if (!/^[0-9a-f-]{36}$/.test(id || "")) return;
-        launcher.connectSource("if command -v python3 >/dev/null; then python3 -I '" + openScript + "' " + id + "; else "
+    function openChat(id, panel) {
+        if (!/^[0-9a-f-]{36}$/.test(id || "")) return false;
+        var command = "if command -v python3 >/dev/null; then python3 -I '" + openScript + "' " + id + "; else "
             + "f=$(grep -rlE --include='local_*.json' '\"cliSessionId\": *\"" + id + "\"' \"$HOME/.config/Claude/claude-code-sessions\" 2>/dev/null | head -1); "
-            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\" && echo opened; fi; true");
+            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\" && echo opened; fi; true";
+        if (panel) fromPanel = command;
+        launcher.connectSource(command);
         root.expanded = false;
+        return true;
+    }
+
+    // A click on the panel: while a session waits for the user it opens that chat straight away
+    // (the pinned one if it waits, else the latest waiting one); otherwise it toggles the list.
+    function activate() {
+        if (expanded || fromPanel !== "") { expanded = false; return; }
+        var waiting = lead && lead.state === "waiting" ? lead : sessions.find(s => s.state === "waiting");
+        if (!waiting || !openChat(waiting.id, true)) expanded = true;
     }
 
     // On Wayland an app cannot raise its own window, so KWin does it: raise.js un-minimizes and
@@ -245,7 +264,7 @@ PlasmoidItem {
         Layout.maximumWidth: Layout.minimumWidth
         Layout.fillWidth: false
         hoverEnabled: true
-        onClicked: root.expanded = !root.expanded
+        onClicked: root.activate()
 
         Rectangle {
             anchors.fill: parent
@@ -283,11 +302,11 @@ PlasmoidItem {
                                 opacity: 0.7
                             }
                             Dot { anchors.centerIn: parent; mode: chip.item.state || "idle" }
+                            // Hover only: a click goes to the panel (pinning is in the list).
                             MouseArea {
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.pick(chip.item.id)
+                                acceptedButtons: Qt.NoButton
                                 PlasmaComponents3.ToolTip { text: chip.item.state ? root.nameOf(chip.item) + ": " + root.stateText(chip.item) : "" }
                             }
                         }
