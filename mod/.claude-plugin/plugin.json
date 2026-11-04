@@ -1,0 +1,7 @@
+{
+  "name": "claudbar",
+  "version": "1.0.0",
+  "description": "Writes each Claude Code session's state and the plan's rate limits to ~/.cache/claudbar for the Claudbar KDE Plasma panel widget",
+  "license": "MIT",
+  "keywords": ["kde", "plasma", "status", "widget", "rate-limits"]
+}

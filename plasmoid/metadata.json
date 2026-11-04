@@ -1,0 +1,17 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Id": "claudbar",
+    "Name": "Claudbar",
+    "Name[pl]": "Claudbar",
+    "Description": "Claude Code sessions, context and plan limits on your panel; hidden while Claude is closed",
+    "Description[pl]": "Sesje Claude Code, kontekst i limity planu na panelu; ukryty, gdy Claude jest wyłączony",
+    "Icon": "utilities-system-monitor",
+    "Category": "System Information",
+    "Version": "1.0.0",
+    "License": "MIT",
+    "Website": "https://github.com/siw0o0/claudbar",
+    "Authors": [{ "Name": "siw0o0" }]
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

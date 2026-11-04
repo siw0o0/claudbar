@@ -1,0 +1,5 @@
+{
+  "name": "claudbar",
+  "owner": { "name": "siw0o0" },
+  "plugins": [{ "name": "claudbar", "source": "./mod", "description": "Session state and rate limits for the Claudbar KDE Plasma panel widget" }]
+}

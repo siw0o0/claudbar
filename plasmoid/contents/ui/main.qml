@@ -1,0 +1,426 @@
+import QtQuick
+import QtQuick.Layouts
+import org.kde.plasma.plasmoid
+import org.kde.plasma.core as PlasmaCore
+import org.kde.plasma.components as PlasmaComponents3
+import org.kde.plasma.plasma5support as P5Support
+import org.kde.kirigami as Kirigami
+import org.kde.plasma.workspace.dbus as DBus
+import QtCore
+import Qt.labs.folderlistmodel
+import "tr.js" as T
+
+PlasmoidItem {
+    id: root
+    // No process polling: Claude is detected by its tray icon (D-Bus), and the state files the
+    // claudbar mod writes are read only when their modification times change.
+    readonly property string home: StandardPaths.writableLocation(StandardPaths.HomeLocation).toString().replace("file://", "")
+    readonly property string dir: home + "/.cache/claudbar"
+    property string trayService: ""
+    property var files: []
+    property var usage: null
+    property real now: Date.now()
+    readonly property var alive: files.filter(s => s.state !== "ended" && now - s.at < 86400000)
+    // Terminal sessions have no tray icon: working or waiting is enough for them.
+    readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - s.at < 600000)
+    readonly property var order: ({ waiting: 0, working: 1, idle: 2 })
+    readonly property var sessions: running ? alive.slice().sort((a, b) => (order[a.state] - order[b.state]) || (b.at - a.at)) : []
+    // A session picked by a click; otherwise the most urgent one (approval, work, latest).
+    property string picked: ""
+    readonly property var lead: sessions.find(s => s.id === picked) || (sessions.length ? sessions[0] : null)
+    // Dots: working and waiting always, finished ones for 5 minutes, the latest finished one stays.
+    readonly property var lastDone: sessions.reduce((best, s) => s.state === "idle" && (!best || s.since > best.since) ? s : best, null)
+    readonly property var shown: sessions.filter(s => s.state !== "idle" || now - s.since < 300000 || s === lastDone || s === lead)
+    // Popup list: active in the last 10 minutes, but never fewer than 3 (filled with the most recent).
+    readonly property var listed: {
+        var recent = sessions.filter(s => now - s.at < 600000);
+        if (recent.length >= 3) return recent;
+        var fill = sessions.filter(s => recent.indexOf(s) < 0).sort((a, b) => b.at - a.at).slice(0, 3 - recent.length);
+        return sessions.filter(s => recent.indexOf(s) >= 0 || fill.indexOf(s) >= 0);
+    }
+    function pick(id) { picked = picked === id ? "" : id; }
+    readonly property var limits: usage ? usage.limits : []
+    readonly property real cost: sessions.reduce((sum, s) => sum + (s.cost || 0), 0)
+
+    // Shown name: a custom one from the popup, else the first meaningful word of the conversation title, else the project.
+    readonly property var names: { try { return JSON.parse(Plasmoid.configuration.names); } catch (e) { return {}; } }
+    function titleWord(t) {
+        var words = (t || "").split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")).filter(w => w);
+        var w = words.find(w => w.length >= 4) || words[0] || "";
+        return w.charAt(0).toUpperCase() + w.slice(1);
+    }
+    function nameOf(s) { return names[s.id] || titleWord(s.title) || s.project; }
+    function rename(id, text) {
+        var map = Object.assign({}, names);
+        var t = text.trim();
+        if (t) map[id] = t; else delete map[id];
+        Plasmoid.configuration.names = JSON.stringify(map);
+    }
+
+    readonly property color sky: "#5aa3e0"
+    readonly property color sage: "#6fb07a"
+    readonly property color dusk: "#a08ad0"
+    readonly property color warn: "#e8913a"
+    readonly property color alert: "#e05a4f"
+    function level(p, base) { return p >= 95 ? alert : p >= 80 ? warn : base; }
+
+    preferredRepresentation: compactRepresentation
+    Plasmoid.backgroundHints: PlasmaCore.Types.NoBackground
+    // Without Claude the widget takes no space; the spacers around it take over.
+    Plasmoid.status: running ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.HiddenStatus
+    toolTipMainText: "Claude"
+    toolTipSubText: lead ? nameOf(lead) + ": " + stateText(lead) : T.tr("No active session")
+
+    // Claude's tray icon: its disappearance arrives as an event; it is searched for only while missing.
+    DBus.DBusServiceWatcher {
+        id: tray
+        busType: DBus.BusType.Session
+        watchedService: root.trayService
+        onRegisteredChanged: if (!registered) root.trayService = ""
+    }
+    function findTray() {
+        DBus.SessionBus.asyncCall({
+            service: "org.kde.StatusNotifierWatcher", path: "/StatusNotifierWatcher",
+            iface: "org.freedesktop.DBus.Properties", member: "Get",
+            signature: "ss", arguments: ["org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems"]
+        }, items => (items || []).forEach(item => {
+            var cut = item.indexOf("/");
+            var service = item.slice(0, cut), path = item.slice(cut);
+            DBus.SessionBus.asyncCall({
+                service: service, path: path, iface: "org.freedesktop.DBus.Properties", member: "Get",
+                signature: "ss", arguments: ["org.kde.StatusNotifierItem", "Id"]
+            }, id => { if (String(id).startsWith("Claude_")) root.trayService = service; }, () => {});
+        }), () => {});
+    }
+    Timer { interval: 5000; repeat: true; running: !tray.registered; triggeredOnStart: true; onTriggered: root.findTray() }
+
+    // Qt reads the files' modification times inside Plasma (no new process). The mod rewrites files
+    // in place, which a directory watcher does not report, so the folder is listed again.
+    FolderListModel {
+        id: folder
+        nameFilters: ["*.json"]
+        showDirs: false
+        onStatusChanged: if (status === FolderListModel.Ready) root.compare()
+    }
+    property string stamp: ""
+    function compare() {
+        var parts = [];
+        for (var i = 0; i < folder.count; i++)
+            parts.push(folder.get(i, "fileName") + folder.get(i, "fileModified").getTime() + "/" + folder.get(i, "fileSize"));
+        var next = parts.join(";");
+        if (next !== stamp) { stamp = next; reread.restart(); }
+    }
+    Timer {
+        // Often while Claude runs, rarely otherwise (only to catch a terminal session).
+        interval: root.running ? 1500 : 10000
+        repeat: true; running: true; triggeredOnStart: true
+        onTriggered: { folder.folder = ""; folder.folder = "file://" + root.dir + "/sessions"; }
+    }
+    // Writes come in bursts (several per tool call): read once after a short quiet spell.
+    Timer { id: reread; interval: 200; onTriggered: root.readFiles() }
+    // A clock for "X min ago" and for fading dots; it reads nothing.
+    Timer { interval: 15000; repeat: true; running: root.running; onTriggered: root.now = Date.now() }
+    onRunningChanged: if (running) reread.restart()
+
+    P5Support.DataSource {
+        id: exec
+        engine: "executable"
+        onNewData: (source, data) => {
+            disconnectSource(source);
+            if (!source.startsWith("awk")) return;
+            var files = [], usage = root.usage;
+            String(data["stdout"]).split("\n").forEach(line => {
+                try {
+                    var o = JSON.parse(line);
+                    if (o.limits) usage = o; else if (o.id) files.push(o);
+                } catch (e) {}
+            });
+            root.files = files;
+            root.usage = usage;
+            root.now = Date.now();
+        }
+    }
+    // One awk process per read: each file as one JSON line.
+    function readFiles() { exec.connectSource("awk 1 '" + dir + "'/sessions/*.json '" + dir + "/usage.json' 2>/dev/null"); }
+    // Once at start: remove session files older than a week.
+    Component.onCompleted: exec.connectSource("find '" + dir + "/sessions' -name '*.json' -mtime +7 -delete 2>/dev/null; true")
+
+    function span(ms) {
+        var m = Math.max(0, Math.round(ms / 60000));
+        if (m < 1) return T.tr("now");
+        if (m < 60) return m + " min";
+        if (m < 1440) return Math.floor(m / 60) + " h " + (m % 60) + " min";
+        return Math.floor(m / 1440) + " d " + Math.floor((m % 1440) / 60) + " h";
+    }
+    function ago(ms) { return ms < 60000 ? span(ms) : T.tr("%1 ago", span(ms)); }
+    function stateText(s) {
+        if (s.state === "waiting") return T.tr("waiting for approval") + (s.tool ? " · " + s.tool : "");
+        if (s.state === "working") return T.tr("working") + (s.tool ? " · " + s.tool : "") + " · " + span(now - s.since);
+        return T.tr("done") + " · " + ago(now - s.since);
+    }
+    function limitName(kind) { return ({ five_hour: T.tr("5 h"), seven_day: T.tr("Week") })[kind] || kind.replace(/_/g, " "); }
+    function resetIn(l) { return l.resetsAt ? "↻ " + span(Date.parse(l.resetsAt) - now) : ""; }
+    // claude-opus-5-5[1m] → Opus 5.5
+    function modelName(m) {
+        var parts = (m || "").replace(/^claude-/, "").replace(/\[.*\]$/, "").split("-");
+        if (!parts[0]) return "";
+        return parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + (parts.length > 1 ? " " + parts.slice(1).join(".") : "");
+    }
+    function usd(v) { return "$" + v.toFixed(2); }
+
+    component Label: PlasmaComponents3.Label {
+        color: Kirigami.Theme.textColor
+        font: Kirigami.Theme.smallFont
+    }
+    component Dim: Label { opacity: 0.65 }
+    component Divider: Rectangle { width: 1; Layout.preferredHeight: 18; color: Kirigami.Theme.textColor; opacity: 0.18 }
+    component Meter: RowLayout {
+        property string name
+        property real value: 0
+        property string extra: ""
+        property color tint: root.sky
+        spacing: Kirigami.Units.smallSpacing
+        Dim { text: parent.name }
+        Bar { visible: !Plasmoid.configuration.compact; Layout.preferredWidth: Kirigami.Units.gridUnit * 4; value: parent.value; color: root.level(parent.value, parent.tint) }
+        // In compact mode the percentage takes the bar's colour, so a high value still stands out.
+        Label {
+            text: Math.round(parent.value) + "%"; font.bold: true; Layout.minimumWidth: Kirigami.Units.gridUnit * 1.6
+            color: Plasmoid.configuration.compact && parent.value >= 80 ? root.level(parent.value, Kirigami.Theme.textColor) : Kirigami.Theme.textColor
+        }
+        Dim { text: parent.extra; visible: text !== "" }
+    }
+
+    // Repeaters below count by index, so a read updates rows in place instead of rebuilding them.
+    compactRepresentation: MouseArea {
+        id: compact
+        readonly property int pad: Kirigami.Units.largeSpacing
+        Layout.minimumWidth: root.running ? row.implicitWidth + pad * 2 : 0
+        Layout.preferredWidth: Layout.minimumWidth
+        Layout.maximumWidth: Layout.minimumWidth
+        Layout.fillWidth: false
+        hoverEnabled: true
+        onClicked: root.expanded = !root.expanded
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 6; anchors.bottomMargin: 6
+            radius: 8
+            color: Kirigami.Theme.textColor
+            opacity: compact.containsMouse ? 0.12 : 0.06
+            border.width: root.lead && root.lead.state === "waiting" ? 1 : 0
+            border.color: root.warn
+        }
+
+        RowLayout {
+            id: row
+            anchors.centerIn: parent
+            spacing: Kirigami.Units.largeSpacing
+            visible: root.running
+
+            RowLayout {
+                spacing: Kirigami.Units.smallSpacing
+                Row {
+                    spacing: 1
+                    Repeater {
+                        model: root.shown.length
+                        delegate: Item {
+                            id: chip
+                            required property int index
+                            readonly property var item: root.shown[index] || ({})
+                            readonly property bool current: !!root.lead && item.id === root.lead.id
+                            width: 15; height: 15
+                            Rectangle {
+                                anchors.fill: parent; radius: width / 2
+                                color: "transparent"
+                                border.width: chip.current ? 1.5 : 0
+                                border.color: Kirigami.Theme.textColor
+                                opacity: 0.7
+                            }
+                            Dot { anchors.centerIn: parent; mode: chip.item.state || "idle" }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.pick(chip.item.id)
+                                PlasmaComponents3.ToolTip { text: chip.item.state ? root.nameOf(chip.item) + ": " + root.stateText(chip.item) : "" }
+                            }
+                        }
+                    }
+                }
+                Kirigami.Icon {
+                    visible: root.picked !== "" && !!root.lead && root.lead.id === root.picked
+                    source: "window-pin"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: Layout.preferredWidth
+                    opacity: 0.7
+                }
+                Label { text: root.lead ? root.nameOf(root.lead) : "Claude"; font.bold: true }
+                Dim {
+                    text: root.lead ? root.stateText(root.lead) : T.tr("no session")
+                    color: root.lead && root.lead.state === "waiting" ? root.warn : Kirigami.Theme.textColor
+                    opacity: root.lead && root.lead.state === "waiting" ? 1 : 0.65
+                }
+            }
+            Divider { visible: !!root.lead && root.lead.context !== null }
+            Meter { visible: !!root.lead && root.lead.context !== null; name: T.tr("Context"); value: root.lead ? root.lead.context || 0 : 0; tint: root.dusk }
+            Repeater {
+                model: root.limits.length
+                delegate: RowLayout {
+                    required property int index
+                    readonly property var item: root.limits[index] || ({})
+                    spacing: Kirigami.Units.largeSpacing
+                    Divider {}
+                    Meter { name: root.limitName(item.kind || ""); value: item.percent || 0; extra: root.resetIn(item); tint: item.kind === "seven_day" ? root.sage : root.sky }
+                }
+            }
+            // Cost is priced as on the API; the panel shows the current session, the popup the total.
+            Divider { visible: !!root.lead && root.lead.cost > 0 }
+            Label { visible: !!root.lead && root.lead.cost > 0; text: root.lead ? root.usd(root.lead.cost || 0) : ""; font.bold: true }
+        }
+    }
+
+    // One-line rows with fixed column widths: nothing moves on hover or on refresh.
+    fullRepresentation: ColumnLayout {
+        readonly property real unit: Kirigami.Units.gridUnit
+        Layout.minimumWidth: unit * 25
+        Layout.maximumWidth: unit * 25
+        spacing: Kirigami.Units.smallSpacing
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.bottomMargin: Kirigami.Units.smallSpacing
+            PlasmaComponents3.Label { text: root.listed.length ? T.tr("Sessions · %1", root.listed.length) : T.tr("No active session"); font.bold: true }
+            Item { Layout.fillWidth: true }
+            PlasmaComponents3.Label {
+                visible: root.listed.length > 0
+                text: root.picked !== "" && !!root.lead && root.lead.id === root.picked ? T.tr("pinned · click to unpin") : T.tr("click to pin")
+                opacity: 0.55
+                font: Kirigami.Theme.smallFont
+            }
+        }
+        Repeater {
+            model: root.listed.length
+            delegate: MouseArea {
+                id: entry
+                required property int index
+                readonly property var item: root.listed[index] || ({})
+                readonly property bool current: !!root.lead && item.id === root.lead.id
+                readonly property real unit: Kirigami.Units.gridUnit
+                Layout.fillWidth: true
+                Layout.preferredHeight: unit * 1.7
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.pick(item.id)
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Kirigami.Units.cornerRadius
+                    color: Kirigami.Theme.highlightColor
+                    opacity: entry.current ? 0.22 : entry.containsMouse ? 0.1 : 0
+                    border.width: entry.current && root.picked === entry.item.id ? 1 : 0
+                    border.color: Kirigami.Theme.highlightColor
+                }
+                PlasmaComponents3.ToolTip { text: entry.item.project + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: 2
+                    spacing: Kirigami.Units.smallSpacing
+                    Dot { mode: entry.item.state || "idle" }
+                    Item {
+                        Layout.preferredWidth: entry.unit * 5.5
+                        Layout.fillHeight: true
+                        PlasmaComponents3.Label {
+                            anchors.fill: parent
+                            visible: !edit.visible
+                            verticalAlignment: Text.AlignVCenter
+                            text: root.nameOf(entry.item)
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+                        // Custom name: Enter saves, Esc cancels, an empty field goes back to the title's word.
+                        PlasmaComponents3.TextField {
+                            id: edit
+                            anchors.fill: parent
+                            anchors.topMargin: 1; anchors.bottomMargin: 1
+                            visible: false
+                            placeholderText: root.titleWord(entry.item.title) || entry.item.project || ""
+                            onAccepted: { root.rename(entry.item.id, text); visible = false; }
+                            Keys.onEscapePressed: visible = false
+                            onActiveFocusChanged: if (!activeFocus) visible = false
+                        }
+                    }
+                    PlasmaComponents3.Label {
+                        Layout.fillWidth: true
+                        text: entry.item.state ? root.stateText(entry.item) : ""
+                        elide: Text.ElideRight
+                        font: Kirigami.Theme.smallFont
+                        color: entry.item.state === "waiting" ? root.warn : Kirigami.Theme.textColor
+                        opacity: entry.item.state === "waiting" ? 1 : 0.65
+                    }
+                    Bar {
+                        Layout.preferredWidth: entry.unit * 2.2
+                        value: entry.item.context || 0
+                        color: root.level(entry.item.context || 0, root.dusk)
+                        opacity: entry.item.context === null ? 0 : 1
+                    }
+                    PlasmaComponents3.Label {
+                        Layout.preferredWidth: entry.unit * 1.8
+                        horizontalAlignment: Text.AlignRight
+                        text: entry.item.context === null || entry.item.context === undefined ? "" : entry.item.context + "%"
+                        font: Kirigami.Theme.smallFont
+                    }
+                    PlasmaComponents3.Label {
+                        Layout.preferredWidth: entry.unit * 2.6
+                        horizontalAlignment: Text.AlignRight
+                        text: entry.item.cost ? root.usd(entry.item.cost) : ""
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.8
+                    }
+                    // Always in the layout, visible only under the cursor: the row keeps its width.
+                    PlasmaComponents3.ToolButton {
+                        icon.name: "edit-rename"
+                        display: PlasmaComponents3.AbstractButton.IconOnly
+                        text: T.tr("Rename")
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2
+                        Layout.preferredHeight: Layout.preferredWidth
+                        opacity: entry.containsMouse || hovered ? 1 : 0
+                        onClicked: { edit.text = root.names[entry.item.id] || ""; edit.visible = true; edit.forceActiveFocus(); }
+                    }
+                }
+            }
+        }
+
+        Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: Kirigami.Units.smallSpacing; visible: root.limits.length > 0 }
+        Repeater {
+            model: root.limits.length
+            delegate: RowLayout {
+                required property int index
+                readonly property var item: root.limits[index] || ({})
+                Layout.fillWidth: true
+                Layout.leftMargin: Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing
+                PlasmaComponents3.Label { text: root.limitName(item.kind || ""); Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+                Bar { Layout.fillWidth: true; value: item.percent || 0; color: root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) }
+                PlasmaComponents3.Label { text: (item.percent || 0) + "%"; font.bold: true; Layout.preferredWidth: Kirigami.Units.gridUnit * 1.8; horizontalAlignment: Text.AlignRight }
+                PlasmaComponents3.Label { text: root.resetIn(item); Layout.preferredWidth: Kirigami.Units.gridUnit * 4.2; font: Kirigami.Theme.smallFont; opacity: 0.6 }
+            }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
+            PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                text: root.usage ? T.tr("Limits read %1", root.ago(root.now - root.usage.at)) + (root.cost > 0 ? " · " + T.tr("total %1", root.usd(root.cost)) : "") : ""
+                elide: Text.ElideRight
+                opacity: 0.5
+                font: Kirigami.Theme.smallFont
+            }
+            PlasmaComponents3.Switch {
+                text: T.tr("Compact")
+                font: Kirigami.Theme.smallFont
+                checked: Plasmoid.configuration.compact
+                onToggled: Plasmoid.configuration.compact = checked
+            }
+        }
+    }
+}
