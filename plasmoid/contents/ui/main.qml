@@ -78,19 +78,24 @@ PlasmoidItem {
         watchedService: root.trayService
         onRegisteredChanged: if (!registered) root.trayService = ""
     }
+    // Plasma's D-Bus module: the signature lists the arguments as a struct, "(ss)", and a call
+    // resolves with its pending reply, whose value is the answer.
+    function dbus(message, done) {
+        DBus.SessionBus.asyncCall(message, reply => (done || (() => {}))(reply && reply.value !== undefined ? reply.value : reply), () => {});
+    }
     function findTray() {
-        DBus.SessionBus.asyncCall({
+        dbus({
             service: "org.kde.StatusNotifierWatcher", path: "/StatusNotifierWatcher",
             iface: "org.freedesktop.DBus.Properties", member: "Get",
-            signature: "ss", arguments: ["org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems"]
-        }, items => (items || []).forEach(item => {
-            var cut = item.indexOf("/");
-            var service = item.slice(0, cut), path = item.slice(cut);
-            DBus.SessionBus.asyncCall({
+            signature: "(ss)", arguments: ["org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems"]
+        }, items => Array.from(items || []).forEach(item => {
+            var cut = String(item).indexOf("/");
+            var service = String(item).slice(0, cut), path = String(item).slice(cut);
+            dbus({
                 service: service, path: path, iface: "org.freedesktop.DBus.Properties", member: "Get",
-                signature: "ss", arguments: ["org.kde.StatusNotifierItem", "Id"]
-            }, id => { if (String(id).startsWith("Claude_")) root.trayService = service; }, () => {});
-        }), () => {});
+                signature: "(ss)", arguments: ["org.kde.StatusNotifierItem", "Id"]
+            }, id => { if (String(id).startsWith("Claude_")) root.trayService = service; });
+        }));
     }
     Timer { interval: 5000; repeat: true; running: !tray.registered; triggeredOnStart: true; onTriggered: root.findTray() }
 
@@ -166,8 +171,8 @@ PlasmoidItem {
     readonly property string raiseScript: Qt.resolvedUrl("../code/raise.js").toString().replace("file://", "")
     function kwin(path, iface, member, signature, args, done) {
         var message = { service: "org.kde.KWin", path: path, iface: iface, member: member };
-        if (signature) { message.signature = signature; message.arguments = args; }
-        DBus.SessionBus.asyncCall(message, done || (() => {}), () => {});
+        if (signature) { message.signature = "(" + signature + ")"; message.arguments = args; }
+        dbus(message, done);
     }
     function raiseClaude() {
         var name = "claudbar-raise";
