@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Open a Claude Code session's chat in the Claude desktop app.
 
-Usage: open.py <CLI session id>
+Usage: open.py <CLI session id> [--unless-shown]
+
+With --unless-shown (Claude's window is in front) it prints "shown" and opens nothing when the
+app already shows that chat: the one it focused last.
 
 The app's deep link takes its own session id (local_...), found by the session file that holds
 the CLI session id. The link goes straight to the running app over Chromium's singleton socket,
@@ -19,17 +22,33 @@ import sys
 CONFIG = os.path.expanduser("~/.config/Claude")
 
 
-def local_id(cli_id):
-    pattern = re.compile(r'"cliSessionId"\s*:\s*"%s"' % re.escape(cli_id))
+FOCUSED = re.compile(r'"lastFocusedAt"\s*:\s*(\d+)')
+
+
+def sessions():
+    """Each app session file's text, newest first."""
     files = glob.glob(os.path.join(CONFIG, "claude-code-sessions", "*", "*", "local_*.json"))
     for path in sorted(files, key=os.path.getmtime, reverse=True):
         try:
             with open(path, encoding="utf-8") as f:
-                if pattern.search(f.read()):
-                    return os.path.basename(path)[:-len(".json")]
+                yield os.path.basename(path)[:-len(".json")], f.read()
         except OSError:
             continue
-    return None
+
+
+def local_id(cli_id):
+    pattern = re.compile(r'"cliSessionId"\s*:\s*"%s"' % re.escape(cli_id))
+    return next((name for name, text in sessions() if pattern.search(text)), None)
+
+
+def shown():
+    """The chat the app shows: the session it focused last."""
+    best, at = None, -1
+    for name, text in sessions():
+        m = FOCUSED.search(text)
+        if m and int(m.group(1)) > at:
+            best, at = name, int(m.group(1))
+    return best
 
 
 def hand_over(url):
@@ -51,6 +70,9 @@ def main():
     session = local_id(cli_id)
     if session is None:
         return  # a terminal session: no chat in the app
+    if "--unless-shown" in sys.argv[2:] and shown() == session:
+        print("shown")
+        return
     url = "claude://code/continue?session=%s&source=claudbar" % session
     try:
         handed = hand_over(url)

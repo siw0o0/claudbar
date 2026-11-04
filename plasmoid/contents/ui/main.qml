@@ -6,6 +6,7 @@ import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.plasma5support as P5Support
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.workspace.dbus as DBus
+import org.kde.taskmanager as TaskManager
 import QtCore
 import Qt.labs.folderlistmodel
 import "tr.js" as T
@@ -156,8 +157,8 @@ PlasmoidItem {
             disconnectSource(source);
             var opened = String(data["stdout"]).indexOf("opened") >= 0;
             if (opened) root.raiseClaude();
-            // A click on the panel that found no chat to open (a terminal session, a session the
-            // app no longer has) shows the list instead.
+            // A click on the panel that opened no chat shows the list instead: a terminal session,
+            // a session the app no longer has, or the chat Claude already shows ("shown").
             else if (source === root.fromPanel) root.expanded = true;
             if (source === root.fromPanel) root.fromPanel = "";
         }
@@ -168,7 +169,8 @@ PlasmoidItem {
     readonly property string openScript: Qt.resolvedUrl("../code/open.py").toString().replace("file://", "")
     function openChat(id, panel) {
         if (!/^[0-9a-f-]{36}$/.test(id || "")) return false;
-        var command = "if command -v python3 >/dev/null; then python3 -I '" + openScript + "' " + id + "; else "
+        var unless = panel && claudeInFront() ? " --unless-shown" : "";
+        var command = "if command -v python3 >/dev/null; then python3 -I '" + openScript + "' " + id + unless + "; else "
             + "f=$(grep -rlE --include='local_*.json' '\"cliSessionId\": *\"" + id + "\"' \"$HOME/.config/Claude/claude-code-sessions\" 2>/dev/null | head -1); "
             + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\" && echo opened; fi; true";
         if (panel) fromPanel = command;
@@ -177,8 +179,16 @@ PlasmoidItem {
         return true;
     }
 
+    // The window in front, without asking KWin: the task manager's model knows it.
+    TaskManager.TasksModel { id: tasks; groupMode: TaskManager.TasksModel.GroupDisabled }
+    function claudeInFront() {
+        var app = String(tasks.data(tasks.activeTask, TaskManager.AbstractTasksModel.AppId) || "");
+        return app.indexOf("com.anthropic.Claude") === 0 || app.toLowerCase() === "claude";
+    }
+
     // A click on the panel: while a session waits for the user it opens that chat straight away
     // (the pinned one if it waits, else the latest waiting one); otherwise it toggles the list.
+    // When Claude is in front and already shows that chat, the list opens instead.
     function activate() {
         if (expanded || fromPanel !== "") { expanded = false; return; }
         var waiting = lead && lead.state === "waiting" ? lead : sessions.find(s => s.state === "waiting");
@@ -218,11 +228,15 @@ PlasmoidItem {
     function ago(ms) { return ms < 60000 ? span(ms) : T.tr("%1 ago", span(ms)); }
     function stateText(s) {
         // A permission prompt names its tool; a question at the end of a turn names none.
+        // The tool's description comes last: on a narrow bar it is the part that gets shortened.
+        var doing = s.tool ? " · " + shortTool(s.tool) + (s.detail ? ": " + s.detail : "") : "";
         if (s.state === "waiting") return s.tool && s.tool !== "AskUserQuestion" && s.tool !== "ExitPlanMode"
-            ? T.tr("waiting for approval") + " · " + s.tool : T.tr("waiting for you");
-        if (s.state === "working") return T.tr("working") + (s.tool ? " · " + s.tool : "") + " · " + span(now - s.since);
+            ? T.tr("waiting for approval") + doing : T.tr("waiting for you");
+        if (s.state === "working") return T.tr("working") + " · " + span(now - s.since) + doing;
         return T.tr("done") + " · " + ago(now - s.since);
     }
+    // mcp__server__tool → tool
+    function shortTool(name) { return name.startsWith("mcp__") ? name.split("__").pop() : name; }
     function limitName(kind) { return ({ five_hour: T.tr("5 h"), seven_day: T.tr("Week") })[kind] || kind.replace(/_/g, " "); }
     function resetIn(l) { return l.resetsAt ? "↻ " + span(Date.parse(l.resetsAt) - now) : ""; }
     // claude-opus-5-5[1m] → Opus 5.5
@@ -252,19 +266,28 @@ PlasmoidItem {
             text: Math.round(parent.value) + "%"; font.bold: true; Layout.minimumWidth: Kirigami.Units.gridUnit * 1.6
             color: Plasmoid.configuration.compact && parent.value >= 80 ? root.level(parent.value, Kirigami.Theme.textColor) : Kirigami.Theme.textColor
         }
-        Dim { text: parent.extra; visible: text !== "" }
+        // Fixed width, so a reset time getting shorter does not move what follows.
+        Dim { text: parent.extra; visible: text !== ""; Layout.preferredWidth: Kirigami.Units.gridUnit * 4; elide: Text.ElideRight }
     }
+
+    // The bar's fixed width; the popup follows it within sensible bounds. It never drops below what
+    // the meters need plus room for a session's dots, name and a few words of its state (minBar),
+    // so nothing overlaps; a wider bar shows more of what the session is doing.
+    property real minBar: 0
+    readonly property real barWidth: Math.max(Kirigami.Units.gridUnit * Plasmoid.configuration.width, minBar)
 
     // Repeaters below count by index, so a read updates rows in place instead of rebuilding them.
     compactRepresentation: MouseArea {
         id: compact
         readonly property int pad: Kirigami.Units.largeSpacing
-        Layout.minimumWidth: root.running ? row.implicitWidth + pad * 2 : 0
+        // A fixed width: the panel does not shift when names, states or times change.
+        Layout.minimumWidth: root.running ? root.barWidth : 0
         Layout.preferredWidth: Layout.minimumWidth
         Layout.maximumWidth: Layout.minimumWidth
         Layout.fillWidth: false
         hoverEnabled: true
         onClicked: root.activate()
+        Binding { target: root; property: "minBar"; value: gauges.implicitWidth + Kirigami.Units.gridUnit * 14 + compact.pad * 2 + Kirigami.Units.largeSpacing }
 
         Rectangle {
             anchors.fill: parent
@@ -278,11 +301,16 @@ PlasmoidItem {
 
         RowLayout {
             id: row
-            anchors.centerIn: parent
+            anchors.fill: parent
+            anchors.leftMargin: compact.pad; anchors.rightMargin: compact.pad
             spacing: Kirigami.Units.largeSpacing
             visible: root.running
+            clip: true
 
+            // The session part takes what is left and shortens its text; the meters keep their place on the right.
             RowLayout {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 spacing: Kirigami.Units.smallSpacing
                 Row {
                     spacing: 1
@@ -318,36 +346,53 @@ PlasmoidItem {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: Layout.preferredWidth
                     opacity: 0.7
                 }
-                Label { text: root.lead ? root.nameOf(root.lead) : "Claude"; font.bold: true }
+                Label {
+                    text: root.lead ? root.nameOf(root.lead) : "Claude"; font.bold: true
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: Kirigami.Units.gridUnit * 8
+                }
                 Dim {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    elide: Text.ElideRight
                     text: root.lead ? root.stateText(root.lead) : T.tr("no session")
                     color: root.lead && root.lead.state === "waiting" ? root.warn : Kirigami.Theme.textColor
                     opacity: root.lead && root.lead.state === "waiting" ? 1 : 0.65
                 }
             }
-            Divider { visible: !!root.lead && root.lead.context !== null }
-            Meter { visible: !!root.lead && root.lead.context !== null; name: T.tr("Context"); value: root.lead ? root.lead.context || 0 : 0; tint: root.dusk }
-            Repeater {
-                model: root.limits.length
-                delegate: RowLayout {
-                    required property int index
-                    readonly property var item: root.limits[index] || ({})
-                    spacing: Kirigami.Units.largeSpacing
-                    Divider {}
-                    Meter { name: root.limitName(item.kind || ""); value: item.percent || 0; extra: root.resetIn(item); tint: item.kind === "seven_day" ? root.sage : root.sky }
+            // Meters keep their natural width; the bar is never narrower than they need.
+            RowLayout {
+                id: gauges
+                spacing: Kirigami.Units.largeSpacing
+                Divider { opacity: !!root.lead && root.lead.context !== null ? 0.18 : 0 }
+                Meter { opacity: !!root.lead && root.lead.context !== null ? 1 : 0; name: T.tr("Context"); value: root.lead ? root.lead.context || 0 : 0; tint: root.dusk }
+                Repeater {
+                    model: root.limits.length
+                    delegate: RowLayout {
+                        required property int index
+                        readonly property var item: root.limits[index] || ({})
+                        spacing: Kirigami.Units.largeSpacing
+                        Divider {}
+                        Meter { name: root.limitName(item.kind || ""); value: item.percent || 0; extra: root.resetIn(item); tint: item.kind === "seven_day" ? root.sage : root.sky }
+                    }
+                }
+                // Cost is priced as on the API; the panel shows the current session, the popup the total.
+                Divider { opacity: !!root.lead && root.lead.cost > 0 ? 0.18 : 0 }
+                Label {
+                    opacity: !!root.lead && root.lead.cost > 0 ? 1 : 0; text: root.lead ? root.usd(root.lead.cost || 0) : ""; font.bold: true
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 3.2; horizontalAlignment: Text.AlignRight
                 }
             }
-            // Cost is priced as on the API; the panel shows the current session, the popup the total.
-            Divider { visible: !!root.lead && root.lead.cost > 0 }
-            Label { visible: !!root.lead && root.lead.cost > 0; text: root.lead ? root.usd(root.lead.cost || 0) : ""; font.bold: true }
         }
     }
 
     // One-line rows with fixed column widths: nothing moves on hover or on refresh.
     fullRepresentation: ColumnLayout {
         readonly property real unit: Kirigami.Units.gridUnit
-        Layout.minimumWidth: unit * 25
-        Layout.maximumWidth: unit * 25
+        // As wide as the bar, but not narrower than the list needs nor wider than reads well.
+        readonly property real fit: Math.max(unit * 25, Math.min(root.barWidth, unit * 44))
+        Layout.minimumWidth: fit
+        Layout.maximumWidth: fit
         spacing: Kirigami.Units.smallSpacing
 
         RowLayout {
@@ -492,6 +537,15 @@ PlasmoidItem {
                 elide: Text.ElideRight
                 opacity: 0.5
                 font: Kirigami.Theme.smallFont
+            }
+            PlasmaComponents3.Label { text: T.tr("Width"); font: Kirigami.Theme.smallFont; opacity: 0.7 }
+            // Applies when released, so the panel does not resize on every step of the drag.
+            PlasmaComponents3.Slider {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                from: Math.ceil(root.minBar / Kirigami.Units.gridUnit / 2) * 2; to: 80; stepSize: 2; snapMode: PlasmaComponents3.Slider.SnapAlways
+                value: Plasmoid.configuration.width
+                onPressedChanged: if (!pressed) Plasmoid.configuration.width = value
+                PlasmaComponents3.ToolTip { text: T.tr("Width of the bar on the panel"); visible: parent.hovered }
             }
             PlasmaComponents3.Switch {
                 text: T.tr("Compact")

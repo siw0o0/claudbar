@@ -13,6 +13,8 @@ type Session = {
   model: string
   state: State
   tool: string | null
+  // What the tool is doing, in a few words: a command's description, a file name, a pattern.
+  detail: string | null
   since: number
   at: number
   context: number | null
@@ -71,6 +73,7 @@ const base = async ($: EngineInterface): Promise<Session> => {
     model: await $.session.model(),
     state: 'idle',
     tool: null,
+    detail: null,
     since: now,
     at: now,
     context: null,
@@ -79,11 +82,27 @@ const base = async ($: EngineInterface): Promise<Session> => {
   return session
 }
 
+// A short, readable line about a tool call; the widget shows as much as fits.
+const describe = (args: Record<string, unknown>): string | null => {
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().split('\n')[0] : null)
+  const file = text(args.file_path) ?? text(args.notebook_path) ?? text(args.path)
+  const found =
+    text(args.description) ??
+    (file && file.split('/').filter(Boolean).pop()) ??
+    text(args.pattern) ??
+    text(args.query) ??
+    text(args.url) ??
+    text(args.command) ??
+    text(args.prompt)
+  return found ? found.slice(0, 120) : null
+}
+
 const mark = async ($: EngineInterface, change: Partial<Session>) => {
   try {
     const s = await base($)
     const now = await $.clock.now()
     if (change.state && change.state !== s.state) s.since = now
+    if ('tool' in change && !('detail' in change)) change = { ...change, detail: null }
     Object.assign(s, change, { at: now })
     await $.fs.write(`${await cache($)}/sessions/${s.id}.json`, JSON.stringify(s))
   } catch {
@@ -146,7 +165,11 @@ export const register: Register = on => {
         asking = true
         await mark($, { state: 'waiting', tool: null })
       } else {
-        await mark($, { state: questions.has(e.tool) ? 'waiting' : 'working', tool: e.tool })
+        await mark($, {
+          state: questions.has(e.tool) ? 'waiting' : 'working',
+          tool: e.tool,
+          detail: describe(e as unknown as Record<string, unknown>),
+        })
       }
     }
     return next(e)
@@ -164,7 +187,7 @@ export const register: Register = on => {
   })
 
   on('classic.PermissionRequest', async ($, e, next) => {
-    await mark($, { state: 'waiting', tool: e.tool_name })
+    await mark($, { state: 'waiting', tool: e.tool_name, detail: describe((e.tool_input ?? {}) as Record<string, unknown>) })
     return next(e)
   })
 

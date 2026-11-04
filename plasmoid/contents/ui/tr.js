@@ -7,6 +7,8 @@ var catalogs = {
         "no session": "bez sesji",
         "waiting for approval": "czeka na zgodę",
         "waiting for you": "czeka na ciebie",
+        "Width": "Szerokość",
+        "Width of the bar on the panel": "Szerokość paska na panelu",
         "working": "pracuje",
         "done": "gotowe",
         "now": "teraz",
