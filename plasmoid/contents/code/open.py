@@ -53,11 +53,13 @@ def main():
         return  # a terminal session: no chat in the app
     url = "claude://code/continue?session=%s&source=claudbar" % session
     try:
-        if hand_over(url):
-            return
+        handed = hand_over(url)
     except OSError:
-        pass
-    subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        handed = False
+    if not handed:
+        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Tells the widget a chat was opened, so it brings the app's window forward.
+    print("opened")
 
 
 if __name__ == "__main__":

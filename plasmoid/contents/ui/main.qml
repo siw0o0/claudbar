@@ -147,15 +147,36 @@ PlasmoidItem {
     P5Support.DataSource {
         id: launcher
         engine: "executable"
-        onNewData: (source, data) => disconnectSource(source)
+        onNewData: (source, data) => {
+            disconnectSource(source);
+            if (String(data["stdout"]).indexOf("opened") >= 0) root.raiseClaude();
+        }
     }
     readonly property string openScript: Qt.resolvedUrl("../code/open.py").toString().replace("file://", "")
     function openChat(id) {
         if (!/^[0-9a-f-]{36}$/.test(id || "")) return;
         launcher.connectSource("if command -v python3 >/dev/null; then python3 -I '" + openScript + "' " + id + "; else "
             + "f=$(grep -rlE --include='local_*.json' '\"cliSessionId\": *\"" + id + "\"' \"$HOME/.config/Claude/claude-code-sessions\" 2>/dev/null | head -1); "
-            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\"; fi; true");
+            + "[ -n \"$f\" ] && xdg-open \"claude://code/continue?session=$(basename \"$f\" .json)&source=claudbar\" && echo opened; fi; true");
         root.expanded = false;
+    }
+
+    // On Wayland an app cannot raise its own window, so KWin does it: raise.js un-minimizes and
+    // focuses Claude's window. Loaded, run and unloaded over D-Bus, without starting a process.
+    readonly property string raiseScript: Qt.resolvedUrl("../code/raise.js").toString().replace("file://", "")
+    function kwin(path, iface, member, signature, args, done) {
+        var message = { service: "org.kde.KWin", path: path, iface: iface, member: member };
+        if (signature) { message.signature = signature; message.arguments = args; }
+        DBus.SessionBus.asyncCall(message, done || (() => {}), () => {});
+    }
+    function raiseClaude() {
+        var name = "claudbar-raise";
+        kwin("/Scripting", "org.kde.kwin.Scripting", "unloadScript", "s", [name], () =>
+            kwin("/Scripting", "org.kde.kwin.Scripting", "loadScript", "ss", [raiseScript, name], id => {
+                if (id < 0) return;
+                kwin("/Scripting/Script" + id, "org.kde.kwin.Script", "run", "", [], () =>
+                    kwin("/Scripting", "org.kde.kwin.Scripting", "unloadScript", "s", [name]));
+            }));
     }
 
     // One awk process per read: each file as one JSON line.
