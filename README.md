@@ -1,8 +1,10 @@
 # Claudbar
 
-A KDE Plasma 6 panel widget that shows what your Claude Code sessions are doing: one coloured dot per session, the current session's state, context usage, your plan's 5-hour and weekly limits, and cost. It stays hidden while Claude is closed.
+A KDE Plasma 6 panel widget that shows what your Claude Code sessions are doing: a coloured spark per session, the current session's state, context usage, your plan's 5-hour and weekly limits, and cost. It stays hidden while Claude is closed.
 
 ![Claudbar on the panel](docs/panel.png)
+
+![A session waiting for you: amber spark and outline](docs/waiting.png)
 
 ![The session list](docs/popup.png)
 
