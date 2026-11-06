@@ -1,41 +1,31 @@
 # Claudbar
 
-A KDE Plasma 6 panel widget that shows what your Claude Code sessions are doing: a coloured spark per session, the current session's state, context usage, your plan's 5-hour and weekly limits, and cost. It stays hidden while Claude is closed.
+Your Claude Code sessions on the KDE Plasma 6 panel. See at a glance which session is working, which one is waiting for you and which one has finished, how full its context is, how much of your plan's limits you have used, and what it cost. One click takes you to the chat that needs you.
 
 ![Claudbar on the panel](docs/panel.png)
 
-![A session waiting for you: amber spark and outline](docs/waiting.png)
+When a session asks for permission or asks you a question, its spark turns amber and blinks, and the bar gets an amber outline:
+
+![A session waiting for you](docs/waiting.png)
+
+A click on the bar opens the list of recent sessions and your limits:
 
 ![The session list](docs/popup.png)
 
 *Unofficial community project, not affiliated with or endorsed by Anthropic.*
 
-## What it shows
+## Features
 
-- **Sparks**: one per session, the current one larger. Clay (turning) means working, amber (blinking) means waiting for you (a permission prompt, or a question the session asked), sage means done. Finished sessions fade out after 5 minutes; the latest one stays. With the Claude style off they are plain dots: blue, orange and green.
-- **The session on the panel**: its name, state, and what it is doing (`working · 2 min · Bash: Run the tests`), context window usage and cost. By default it shows the most urgent session (waiting, then working, then the latest).
-- **Limits**: the plan's 5-hour and weekly usage with time to reset.
-- **A click on the bar**: while a session waits for you, it opens that chat in the Claude desktop app right away (the pinned session if it is the one waiting, else the latest waiting one). Otherwise it opens the list: also when Claude is in front and already shows that chat, or when the waiting session has no chat in the app (a terminal session).
-- **The list**: sessions active in the last 10 minutes, at least 3. Click a row to open that chat in the Claude desktop app (through its `claude://code/continue` link, handed straight to the running app, so it switches at once; terminal sessions have no chat to open). If the app is minimized, KWin brings its window back and focuses it. The buttons on the right of a row pin the session to the panel (click again to unpin) and give it a short name.
-
-**Settings** (right-click the widget, *Configure Claudbar…*): **Width** sets the bar's fixed width on the panel. It never goes below what the meters need; a wider bar shows more of what a session is doing, and the list follows it within limits. **Compact** hides the bars on the panel and keeps only the percentages (coloured when they pass 80%). **Look** switches the Claude style (on by default): a warm dark bar, sparks, a serif session name and clay and kraft accents; off, the bar follows the Plasma theme with plain dots.
-
-Panel Colorizer users: its widget text colour overrides Claudbar's colours. Add a global override for Claudbar with fallback turned off to keep them.
-
-Session names come from the conversation's title (its first meaningful word), or the project folder when there is no title yet.
-
-## How it works
-
-Two parts, both local:
-
-1. **A Claude Code mod** (`mod/`) hooks session events and writes each session's state to `~/.cache/claudbar/sessions/<id>.json` and the plan's limits to `~/.cache/claudbar/usage.json`. It only observes; it never calls the model, so it costs no tokens, and it needs no login or API key.
-2. **A Plasma widget** (`plasmoid/`) reads those files. It notices changes by checking file modification times inside Plasma and reads the files with one `awk` call only when something changed. It finds the Claude desktop app through its tray icon on D-Bus and hides when the app quits. Terminal sessions show while they are working or waiting.
-
-Cost is the API-equivalent price Claude Code reports, not what a subscription charges.
+- **A spark per session.** Clay and turning while it works, amber and blinking while it waits for you, sage when it is done. The current session's spark is the larger one. Finished sessions fade out after 5 minutes; the latest one stays.
+- **What the session is doing.** Its name, state and current step (`working · 2 min · Bash: Run the tests`), its context usage and cost. The bar shows the most urgent session: waiting first, then working, then the latest.
+- **Plan limits.** The 5-hour and weekly usage, with the time until each resets. Values turn amber past 80% and red past 95%.
+- **One click to the chat.** While a session waits, a click on the bar opens that chat in the Claude desktop app, bringing the window back if it was minimized.
+- **The session list.** Sessions from the last 10 minutes (at least 3). Click a row to open its chat, pin a session to the bar, or give it a short name.
+- **Out of the way.** The widget hides while Claude is closed and takes no space on the panel.
 
 ## Install
 
-Requirements: KDE Plasma 6, and Claude Code (the CLI or the desktop app's Code tab). Python 3 makes opening a chat instant; without it the widget falls back to `xdg-open`, which takes about a second.
+You need KDE Plasma 6 and Claude Code (the CLI or the desktop app's Code tab). With Python 3 a chat opens instantly; without it Claudbar falls back to `xdg-open`, which takes about a second.
 
 **1. The widget**
 
@@ -45,17 +35,17 @@ cd claudbar
 ./install.sh
 ```
 
-Then right-click the panel, choose *Add Widgets…*, search for **Claudbar** and drag it onto the panel.
+Right-click the panel, choose *Add Widgets…*, search for **Claudbar** and drag it onto the panel.
 
-**2. The Claude Code mod**
+**2. The Claude Code plugin** that feeds it
 
-At the prompt of a terminal session (`claude`):
+In a terminal session (`claude`):
 
 ```
 /plugin install claudbar --marketplace siw0o0/claudbar
 ```
 
-Answer `y` to add the marketplace, then pick the user scope. From a shell instead:
+Answer `y` to add the marketplace and pick the user scope. From a shell:
 
 ```bash
 claude plugin install claudbar --marketplace siw0o0/claudbar
@@ -63,7 +53,31 @@ claude plugin install claudbar --marketplace siw0o0/claudbar
 
 In the desktop app, where `/plugin` does not run: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `siw0o0/claudbar`, then **Add plugin**.
 
-New sessions pick the mod up; restart open ones (or the desktop app) to see them on the panel.
+New sessions pick the plugin up. Restart open sessions, or the desktop app, to see them on the panel.
+
+## Settings
+
+Right-click the widget and choose *Configure Claudbar…*
+
+- **Width**: the bar's fixed width on the panel, so it never jumps as names and times change. It never goes below what the meters need; a wider bar shows more of what a session is doing.
+- **Compact**: percentages only, without the bars.
+- **Look**: the Claude style (on by default) with a warm dark bar and list, sparks, serif session names and clay and kraft accents. Turned off, Claudbar follows your Plasma theme and shows plain blue, orange and green dots.
+
+Session names come from the conversation's title (its first meaningful word), or the project folder until there is a title.
+
+## How it works
+
+Everything stays on your machine.
+
+1. **The plugin** (`mod/`) listens to Claude Code's session events and writes each session's state to `~/.cache/claudbar/sessions/<id>.json` and your plan's limits to `~/.cache/claudbar/usage.json`. It only observes: it never calls the model, so it costs no tokens, and it needs no login or API key.
+2. **The widget** (`plasmoid/`) reads those files, and only when their modification times change. It finds the Claude desktop app through its tray icon on D-Bus, and opens chats through the app's `claude://code/continue` links. Terminal sessions have no chat in the app; they show on the bar while they work or wait.
+
+Cost is the API-equivalent price Claude Code reports, not what a subscription charges.
+
+## Notes
+
+- **Panel Colorizer** overrides the text colour of panel widgets. To keep Claudbar's colours, add a global override for Claudbar with fallback turned off.
+- **Languages**: English, and Polish when the system locale is Polish. Translations live in `plasmoid/contents/ui/tr.js`; a new language is one more catalog there.
 
 ## Uninstall
 
@@ -71,11 +85,7 @@ New sessions pick the mod up; restart open ones (or the desktop app) to see them
 ./install.sh remove
 ```
 
-and `/plugin uninstall claudbar` in Claude Code. `~/.cache/claudbar` can be deleted.
-
-## Languages
-
-The interface is in English, with Polish when the system locale is Polish. Translations live in `plasmoid/contents/ui/tr.js`; adding a language is one more catalog there.
+Then run `/plugin uninstall claudbar` in Claude Code. You can delete `~/.cache/claudbar`.
 
 ## License
 
