@@ -9,7 +9,7 @@
     "Icon": "utilities-system-monitor",
     "Category": "System Information",
     "Version": "1.0.0",
-    "License": "MIT",
+    "License": "GPL-3.0-or-later",
     "Website": "https://github.com/siw0o0/claudbar",
     "Authors": [{ "Name": "siw0o0" }]
   },

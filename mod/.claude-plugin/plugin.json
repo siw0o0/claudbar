@@ -2,6 +2,6 @@
   "name": "claudbar",
   "version": "1.0.0",
   "description": "Writes each Claude Code session's state and the plan's rate limits to ~/.cache/claudbar for the Claudbar KDE Plasma panel widget",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "keywords": ["kde", "plasma", "status", "widget", "rate-limits"]
 }
