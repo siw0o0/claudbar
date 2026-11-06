@@ -413,144 +413,162 @@ PlasmoidItem {
     }
 
     // One-line rows with fixed column widths: nothing moves on hover or on refresh.
-    fullRepresentation: ColumnLayout {
+    fullRepresentation: Item {
+        id: popup
         readonly property real unit: Kirigami.Units.gridUnit
         // As wide as the bar, but not narrower than the list needs nor wider than reads well.
         readonly property real fit: Math.max(unit * 25, Math.min(root.barWidth, unit * 44))
         Layout.minimumWidth: fit
         Layout.maximumWidth: fit
-        spacing: Kirigami.Units.smallSpacing
-
-        PlasmaComponents3.Label {
-            visible: root.listed.length === 0
-            text: T.tr("No active session")
-            opacity: 0.6
+        Layout.minimumHeight: list.implicitHeight
+        Layout.preferredHeight: list.implicitHeight
+        // The Claude style paints the popup like the bar, over the dialog's own padding, with
+        // cream text whatever the Plasma theme.
+        Binding { target: popup.Kirigami.Theme; property: "textColor"; value: root.ink; when: root.claude }
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -Kirigami.Units.largeSpacing
+            visible: root.claude
+            color: "#2b2a27"
+            radius: Kirigami.Units.cornerRadius
         }
-        Repeater {
-            model: root.listed.length
-            delegate: MouseArea {
-                id: entry
-                required property int index
-                readonly property var item: root.listed[index] || ({})
-                readonly property bool current: !!root.lead && item.id === root.lead.id
-                readonly property real unit: Kirigami.Units.gridUnit
-                Layout.fillWidth: true
-                Layout.preferredHeight: unit * 1.7
-                readonly property bool pinned: root.picked !== "" && root.picked === item.id
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.openChat(item.id)
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Kirigami.Units.cornerRadius
-                    color: root.claude ? root.sky : Kirigami.Theme.highlightColor
-                    opacity: entry.current ? 0.22 : entry.containsMouse ? 0.1 : 0
-                    border.width: entry.pinned ? 1 : 0
-                    border.color: root.claude ? root.sky : Kirigami.Theme.highlightColor
-                }
-                PlasmaComponents3.ToolTip { text: entry.item.project + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
+        ColumnLayout {
+            id: list
+            anchors.fill: parent
+            spacing: Kirigami.Units.smallSpacing
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: 2
-                    spacing: Kirigami.Units.smallSpacing
-                    Dot { mode: entry.item.state || "idle"; spark: root.claude; size: root.claude ? 12 : 9 }
-                    Item {
-                        Layout.preferredWidth: entry.unit * 5.5
-                        Layout.fillHeight: true
+            PlasmaComponents3.Label {
+                visible: root.listed.length === 0
+                text: T.tr("No active session")
+                opacity: 0.6
+            }
+            Repeater {
+                model: root.listed.length
+                delegate: MouseArea {
+                    id: entry
+                    required property int index
+                    readonly property var item: root.listed[index] || ({})
+                    readonly property bool current: !!root.lead && item.id === root.lead.id
+                    readonly property real unit: Kirigami.Units.gridUnit
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: unit * 1.7
+                    readonly property bool pinned: root.picked !== "" && root.picked === item.id
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openChat(item.id)
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Kirigami.Units.cornerRadius
+                        color: root.claude ? root.sky : Kirigami.Theme.highlightColor
+                        opacity: entry.current ? 0.22 : entry.containsMouse ? 0.1 : 0
+                        border.width: entry.pinned ? 1 : 0
+                        border.color: root.claude ? root.sky : Kirigami.Theme.highlightColor
+                    }
+                    PlasmaComponents3.ToolTip { text: entry.item.project + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: 2
+                        spacing: Kirigami.Units.smallSpacing
+                        Dot { mode: entry.item.state || "idle"; spark: root.claude; size: root.claude ? 12 : 9 }
+                        Item {
+                            Layout.preferredWidth: entry.unit * 5.5
+                            Layout.fillHeight: true
+                            PlasmaComponents3.Label {
+                                anchors.fill: parent
+                                visible: !edit.visible
+                                verticalAlignment: Text.AlignVCenter
+                                text: root.nameOf(entry.item)
+                                font.bold: !root.claude
+                                font.family: root.claude ? "serif" : Kirigami.Theme.defaultFont.family
+                                elide: Text.ElideRight
+                            }
+                            // Custom name: Enter saves, Esc cancels, an empty field goes back to the title's word.
+                            PlasmaComponents3.TextField {
+                                id: edit
+                                anchors.fill: parent
+                                anchors.topMargin: 1; anchors.bottomMargin: 1
+                                visible: false
+                                placeholderText: root.titleWord(entry.item.title) || entry.item.project || ""
+                                onAccepted: { root.rename(entry.item.id, text); visible = false; }
+                                Keys.onEscapePressed: visible = false
+                                onActiveFocusChanged: if (!activeFocus) visible = false
+                            }
+                        }
                         PlasmaComponents3.Label {
-                            anchors.fill: parent
-                            visible: !edit.visible
-                            verticalAlignment: Text.AlignVCenter
-                            text: root.nameOf(entry.item)
-                            font.bold: !root.claude
-                            font.family: root.claude ? "serif" : Kirigami.Theme.defaultFont.family
+                            Layout.fillWidth: true
+                            text: entry.item.state ? root.stateText(entry.item) : ""
                             elide: Text.ElideRight
+                            font: Kirigami.Theme.smallFont
+                            color: entry.item.state === "waiting" ? root.warn : Kirigami.Theme.textColor
+                            opacity: entry.item.state === "waiting" ? 1 : 0.65
                         }
-                        // Custom name: Enter saves, Esc cancels, an empty field goes back to the title's word.
-                        PlasmaComponents3.TextField {
-                            id: edit
-                            anchors.fill: parent
-                            anchors.topMargin: 1; anchors.bottomMargin: 1
-                            visible: false
-                            placeholderText: root.titleWord(entry.item.title) || entry.item.project || ""
-                            onAccepted: { root.rename(entry.item.id, text); visible = false; }
-                            Keys.onEscapePressed: visible = false
-                            onActiveFocusChanged: if (!activeFocus) visible = false
+                        Bar {
+                            Layout.preferredWidth: entry.unit * 2.2
+                            value: entry.item.context || 0
+                            color: root.level(entry.item.context || 0, root.dusk)
+                            opacity: entry.item.context === null ? 0 : 1
                         }
-                    }
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: entry.item.state ? root.stateText(entry.item) : ""
-                        elide: Text.ElideRight
-                        font: Kirigami.Theme.smallFont
-                        color: entry.item.state === "waiting" ? root.warn : Kirigami.Theme.textColor
-                        opacity: entry.item.state === "waiting" ? 1 : 0.65
-                    }
-                    Bar {
-                        Layout.preferredWidth: entry.unit * 2.2
-                        value: entry.item.context || 0
-                        color: root.level(entry.item.context || 0, root.dusk)
-                        opacity: entry.item.context === null ? 0 : 1
-                    }
-                    PlasmaComponents3.Label {
-                        Layout.preferredWidth: entry.unit * 1.8
-                        horizontalAlignment: Text.AlignRight
-                        text: entry.item.context === null || entry.item.context === undefined ? "" : entry.item.context + "%"
-                        font: Kirigami.Theme.smallFont
-                        color: root.claude ? root.level(entry.item.context || 0, root.dusk) : Kirigami.Theme.textColor
-                    }
-                    PlasmaComponents3.Label {
-                        Layout.preferredWidth: entry.unit * 2.6
-                        horizontalAlignment: Text.AlignRight
-                        text: entry.item.cost ? root.usd(entry.item.cost) : ""
-                        font: Kirigami.Theme.smallFont
-                        color: root.claude ? root.sage : Kirigami.Theme.textColor
-                        opacity: root.claude ? 1 : 0.8
-                    }
-                    // Buttons stay in the layout and only fade in, so the row keeps its width.
-                    PlasmaComponents3.ToolButton {
-                        icon.name: "window-pin"
-                        display: PlasmaComponents3.AbstractButton.IconOnly
-                        text: entry.pinned ? T.tr("Unpin from the panel") : T.tr("Pin to the panel")
-                        checkable: true
-                        checked: entry.pinned
-                        Layout.preferredWidth: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2
-                        Layout.preferredHeight: Layout.preferredWidth
-                        opacity: entry.pinned || entry.containsMouse || hovered ? 1 : 0
-                        onClicked: root.pick(entry.item.id)
-                        PlasmaComponents3.ToolTip { text: parent.text }
-                    }
-                    PlasmaComponents3.ToolButton {
-                        icon.name: "edit-rename"
-                        display: PlasmaComponents3.AbstractButton.IconOnly
-                        text: T.tr("Rename")
-                        Layout.preferredWidth: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2
-                        Layout.preferredHeight: Layout.preferredWidth
-                        opacity: entry.containsMouse || hovered ? 1 : 0
-                        onClicked: { edit.text = root.names[entry.item.id] || ""; edit.visible = true; edit.forceActiveFocus(); }
+                        PlasmaComponents3.Label {
+                            Layout.preferredWidth: entry.unit * 1.8
+                            horizontalAlignment: Text.AlignRight
+                            text: entry.item.context === null || entry.item.context === undefined ? "" : entry.item.context + "%"
+                            font: Kirigami.Theme.smallFont
+                            color: root.claude ? root.level(entry.item.context || 0, root.dusk) : Kirigami.Theme.textColor
+                        }
+                        PlasmaComponents3.Label {
+                            Layout.preferredWidth: entry.unit * 2.6
+                            horizontalAlignment: Text.AlignRight
+                            text: entry.item.cost ? root.usd(entry.item.cost) : ""
+                            font: Kirigami.Theme.smallFont
+                            color: root.claude ? root.sage : Kirigami.Theme.textColor
+                            opacity: root.claude ? 1 : 0.8
+                        }
+                        // Buttons stay in the layout and only fade in, so the row keeps its width.
+                        PlasmaComponents3.ToolButton {
+                            icon.name: "window-pin"
+                            display: PlasmaComponents3.AbstractButton.IconOnly
+                            text: entry.pinned ? T.tr("Unpin from the panel") : T.tr("Pin to the panel")
+                            checkable: true
+                            checked: entry.pinned
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2
+                            Layout.preferredHeight: Layout.preferredWidth
+                            opacity: entry.pinned || entry.containsMouse || hovered ? 1 : 0
+                            onClicked: root.pick(entry.item.id)
+                            PlasmaComponents3.ToolTip { text: parent.text }
+                        }
+                        PlasmaComponents3.ToolButton {
+                            icon.name: "edit-rename"
+                            display: PlasmaComponents3.AbstractButton.IconOnly
+                            text: T.tr("Rename")
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing * 2
+                            Layout.preferredHeight: Layout.preferredWidth
+                            opacity: entry.containsMouse || hovered ? 1 : 0
+                            onClicked: { edit.text = root.names[entry.item.id] || ""; edit.visible = true; edit.forceActiveFocus(); }
+                        }
                     }
                 }
             }
-        }
 
-        Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: Kirigami.Units.smallSpacing; visible: root.limits.length > 0 }
-        Repeater {
-            model: root.limits.length
-            delegate: RowLayout {
-                required property int index
-                readonly property var item: root.limits[index] || ({})
-                Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.smallSpacing
-                spacing: Kirigami.Units.smallSpacing
-                PlasmaComponents3.Label { text: root.limitName(item.kind || ""); Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5; font: Kirigami.Theme.smallFont; opacity: 0.7 }
-                Bar { Layout.fillWidth: true; value: item.percent || 0; color: root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) }
-                PlasmaComponents3.Label {
-                    text: (item.percent || 0) + "%"; font.bold: true; Layout.preferredWidth: Kirigami.Units.gridUnit * 1.8; horizontalAlignment: Text.AlignRight
-                    color: root.claude ? root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) : Kirigami.Theme.textColor
+            Kirigami.Separator { Layout.fillWidth: true; Layout.topMargin: Kirigami.Units.smallSpacing; visible: root.limits.length > 0 }
+            Repeater {
+                model: root.limits.length
+                delegate: RowLayout {
+                    required property int index
+                    readonly property var item: root.limits[index] || ({})
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.smallSpacing; Layout.rightMargin: Kirigami.Units.smallSpacing
+                    spacing: Kirigami.Units.smallSpacing
+                    PlasmaComponents3.Label { text: root.limitName(item.kind || ""); Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+                    Bar { Layout.fillWidth: true; value: item.percent || 0; color: root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) }
+                    PlasmaComponents3.Label {
+                        text: (item.percent || 0) + "%"; font.bold: true; Layout.preferredWidth: Kirigami.Units.gridUnit * 1.8; horizontalAlignment: Text.AlignRight
+                        color: root.claude ? root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) : Kirigami.Theme.textColor
+                    }
+                    PlasmaComponents3.Label { text: root.resetIn(item); Layout.preferredWidth: Kirigami.Units.gridUnit * 4.2; font: Kirigami.Theme.smallFont; opacity: 0.6 }
                 }
-                PlasmaComponents3.Label { text: root.resetIn(item); Layout.preferredWidth: Kirigami.Units.gridUnit * 4.2; font: Kirigami.Theme.smallFont; opacity: 0.6 }
             }
         }
     }
