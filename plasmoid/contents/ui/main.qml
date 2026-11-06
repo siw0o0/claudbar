@@ -58,10 +58,12 @@ PlasmoidItem {
         Plasmoid.configuration.names = JSON.stringify(map);
     }
 
-    readonly property color sky: "#5aa3e0"
-    readonly property color sage: "#6fb07a"
-    readonly property color dusk: "#a08ad0"
-    readonly property color warn: "#e8913a"
+    // Claude style: clay for the 5-hour limit, kraft for the week, warm grey for context.
+    readonly property bool claude: Plasmoid.configuration.claudeStyle
+    readonly property color sky: claude ? "#d97757" : "#5aa3e0"
+    readonly property color sage: claude ? "#d4a27f" : "#6fb07a"
+    readonly property color dusk: claude ? "#c4b5a2" : "#a08ad0"
+    readonly property color warn: claude ? "#e8a33d" : "#e8913a"
     readonly property color alert: "#e05a4f"
     function level(p, base) { return p >= 95 ? alert : p >= 80 ? warn : base; }
 
@@ -252,22 +254,36 @@ PlasmoidItem {
         font: Kirigami.Theme.smallFont
     }
     component Dim: Label { opacity: 0.65 }
-    component Divider: Rectangle { width: 1; Layout.preferredHeight: 18; color: Kirigami.Theme.textColor; opacity: 0.18 }
+    // The bar on the panel: in the Claude style it has its own warm dark background, so its text
+    // colours are fixed instead of following the Plasma theme.
+    readonly property color ink: claude ? "#f0eee6" : Kirigami.Theme.textColor
+    component PanelLabel: Label { color: root.ink }
+    component PanelDim: Label { color: root.claude ? "#a39e93" : Kirigami.Theme.textColor; opacity: root.claude ? 1 : 0.65 }
+    component Divider: Rectangle { width: 1; Layout.preferredHeight: 18; color: root.claude ? "#4a4740" : Kirigami.Theme.textColor; opacity: root.claude ? 1 : 0.18 }
     component Meter: RowLayout {
         property string name
         property real value: 0
         property string extra: ""
         property color tint: root.sky
         spacing: Kirigami.Units.smallSpacing
-        Dim { text: parent.name }
-        Bar { visible: !Plasmoid.configuration.compact; Layout.preferredWidth: Kirigami.Units.gridUnit * 4; value: parent.value; color: root.level(parent.value, parent.tint) }
-        // In compact mode the percentage takes the bar's colour, so a high value still stands out.
-        Label {
+        PanelDim { text: parent.name }
+        Bar {
+            visible: !Plasmoid.configuration.compact; Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+            value: parent.value; color: root.level(parent.value, parent.tint)
+            track: root.claude ? "#3d3b36" : Qt.rgba(1, 1, 1, 0.14)
+        }
+        // In compact mode the percentage takes the bar's colour, so a high value still stands out;
+        // the Claude style always colours it.
+        PanelLabel {
             text: Math.round(parent.value) + "%"; font.bold: true; Layout.minimumWidth: Kirigami.Units.gridUnit * 1.6
-            color: Plasmoid.configuration.compact && parent.value >= 80 ? root.level(parent.value, Kirigami.Theme.textColor) : Kirigami.Theme.textColor
+            color: root.claude ? root.level(parent.value, parent.tint)
+                : Plasmoid.configuration.compact && parent.value >= 80 ? root.level(parent.value, Kirigami.Theme.textColor) : Kirigami.Theme.textColor
         }
         // Fixed width, so a reset time getting shorter does not move what follows.
-        Dim { text: parent.extra; visible: text !== ""; Layout.preferredWidth: Kirigami.Units.gridUnit * 4; elide: Text.ElideRight }
+        PanelDim {
+            text: parent.extra; visible: text !== ""; Layout.preferredWidth: Kirigami.Units.gridUnit * 4; elide: Text.ElideRight
+            color: root.claude ? "#7d786d" : Kirigami.Theme.textColor
+        }
     }
 
     // The bar's fixed width; the popup follows it within sensible bounds. It never drops below what
@@ -292,9 +308,10 @@ PlasmoidItem {
         Rectangle {
             anchors.fill: parent
             anchors.topMargin: 6; anchors.bottomMargin: 6
-            radius: 8
-            color: Kirigami.Theme.textColor
-            opacity: compact.containsMouse ? 0.12 : 0.06
+            radius: root.claude ? 10 : 8
+            color: root.claude ? (compact.containsMouse ? "#34322e" : "#2b2a27") : Kirigami.Theme.textColor
+            opacity: root.claude ? 1 : compact.containsMouse ? 0.12 : 0.06
+            // Waiting for you: an amber outline around the bar.
             border.width: root.lead && root.lead.state === "waiting" ? 1 : 0
             border.color: root.warn
         }
@@ -321,15 +338,20 @@ PlasmoidItem {
                             required property int index
                             readonly property var item: root.shown[index] || ({})
                             readonly property bool current: !!root.lead && item.id === root.lead.id
-                            width: 15; height: 15
+                            width: root.claude ? 18 : 15; height: width
+                            // The Claude style marks the current session with a bigger spark instead of a ring.
                             Rectangle {
                                 anchors.fill: parent; radius: width / 2
                                 color: "transparent"
-                                border.width: chip.current ? 1.5 : 0
+                                border.width: chip.current && !root.claude ? 1.5 : 0
                                 border.color: Kirigami.Theme.textColor
                                 opacity: 0.7
                             }
-                            Dot { anchors.centerIn: parent; mode: chip.item.state || "idle" }
+                            Dot {
+                                anchors.centerIn: parent; mode: chip.item.state || "idle"
+                                spark: root.claude; spin: chip.current
+                                size: root.claude ? (chip.current ? 17 : 11) : 9
+                            }
                             // Hover only: a click goes to the panel (pinning is in the list).
                             MouseArea {
                                 anchors.fill: parent
@@ -346,18 +368,21 @@ PlasmoidItem {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: Layout.preferredWidth
                     opacity: 0.7
                 }
-                Label {
-                    text: root.lead ? root.nameOf(root.lead) : "Claude"; font.bold: true
+                PanelLabel {
+                    text: root.lead ? root.nameOf(root.lead) : "Claude"
+                    font.bold: !root.claude
+                    font.family: root.claude ? "serif" : Kirigami.Theme.smallFont.family
+                    font.pointSize: root.claude ? Kirigami.Theme.defaultFont.pointSize * 1.05 : Kirigami.Theme.smallFont.pointSize
                     elide: Text.ElideRight
                     Layout.maximumWidth: Kirigami.Units.gridUnit * 8
                 }
-                Dim {
+                PanelDim {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     elide: Text.ElideRight
                     text: root.lead ? root.stateText(root.lead) : T.tr("no session")
-                    color: root.lead && root.lead.state === "waiting" ? root.warn : Kirigami.Theme.textColor
-                    opacity: root.lead && root.lead.state === "waiting" ? 1 : 0.65
+                    color: root.lead && root.lead.state === "waiting" ? root.warn : root.claude ? "#a39e93" : Kirigami.Theme.textColor
+                    opacity: root.lead && root.lead.state === "waiting" || root.claude ? 1 : 0.65
                 }
             }
             // Meters keep their natural width; the bar is never narrower than they need.
@@ -378,8 +403,9 @@ PlasmoidItem {
                 }
                 // Cost is priced as on the API; the panel shows the current session, the popup the total.
                 Divider { opacity: !!root.lead && root.lead.cost > 0 ? 0.18 : 0 }
-                Label {
+                PanelLabel {
                     opacity: !!root.lead && root.lead.cost > 0 ? 1 : 0; text: root.lead ? root.usd(root.lead.cost || 0) : ""; font.bold: true
+                    color: root.claude ? root.sage : Kirigami.Theme.textColor
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 3.2; horizontalAlignment: Text.AlignRight
                 }
             }
@@ -418,10 +444,10 @@ PlasmoidItem {
                 Rectangle {
                     anchors.fill: parent
                     radius: Kirigami.Units.cornerRadius
-                    color: Kirigami.Theme.highlightColor
+                    color: root.claude ? root.sky : Kirigami.Theme.highlightColor
                     opacity: entry.current ? 0.22 : entry.containsMouse ? 0.1 : 0
                     border.width: entry.pinned ? 1 : 0
-                    border.color: Kirigami.Theme.highlightColor
+                    border.color: root.claude ? root.sky : Kirigami.Theme.highlightColor
                 }
                 PlasmaComponents3.ToolTip { text: entry.item.project + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
 
@@ -429,7 +455,7 @@ PlasmoidItem {
                     anchors.fill: parent
                     anchors.leftMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: 2
                     spacing: Kirigami.Units.smallSpacing
-                    Dot { mode: entry.item.state || "idle" }
+                    Dot { mode: entry.item.state || "idle"; spark: root.claude; size: root.claude ? 12 : 9 }
                     Item {
                         Layout.preferredWidth: entry.unit * 5.5
                         Layout.fillHeight: true
@@ -438,7 +464,8 @@ PlasmoidItem {
                             visible: !edit.visible
                             verticalAlignment: Text.AlignVCenter
                             text: root.nameOf(entry.item)
-                            font.bold: true
+                            font.bold: !root.claude
+                            font.family: root.claude ? "serif" : Kirigami.Theme.defaultFont.family
                             elide: Text.ElideRight
                         }
                         // Custom name: Enter saves, Esc cancels, an empty field goes back to the title's word.
@@ -472,13 +499,15 @@ PlasmoidItem {
                         horizontalAlignment: Text.AlignRight
                         text: entry.item.context === null || entry.item.context === undefined ? "" : entry.item.context + "%"
                         font: Kirigami.Theme.smallFont
+                        color: root.claude ? root.level(entry.item.context || 0, root.dusk) : Kirigami.Theme.textColor
                     }
                     PlasmaComponents3.Label {
                         Layout.preferredWidth: entry.unit * 2.6
                         horizontalAlignment: Text.AlignRight
                         text: entry.item.cost ? root.usd(entry.item.cost) : ""
                         font: Kirigami.Theme.smallFont
-                        opacity: 0.8
+                        color: root.claude ? root.sage : Kirigami.Theme.textColor
+                        opacity: root.claude ? 1 : 0.8
                     }
                     // Buttons stay in the layout and only fade in, so the row keeps its width.
                     PlasmaComponents3.ToolButton {
@@ -517,7 +546,10 @@ PlasmoidItem {
                 spacing: Kirigami.Units.smallSpacing
                 PlasmaComponents3.Label { text: root.limitName(item.kind || ""); Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5; font: Kirigami.Theme.smallFont; opacity: 0.7 }
                 Bar { Layout.fillWidth: true; value: item.percent || 0; color: root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) }
-                PlasmaComponents3.Label { text: (item.percent || 0) + "%"; font.bold: true; Layout.preferredWidth: Kirigami.Units.gridUnit * 1.8; horizontalAlignment: Text.AlignRight }
+                PlasmaComponents3.Label {
+                    text: (item.percent || 0) + "%"; font.bold: true; Layout.preferredWidth: Kirigami.Units.gridUnit * 1.8; horizontalAlignment: Text.AlignRight
+                    color: root.claude ? root.level(item.percent || 0, item.kind === "seven_day" ? root.sage : root.sky) : Kirigami.Theme.textColor
+                }
                 PlasmaComponents3.Label { text: root.resetIn(item); Layout.preferredWidth: Kirigami.Units.gridUnit * 4.2; font: Kirigami.Theme.smallFont; opacity: 0.6 }
             }
         }

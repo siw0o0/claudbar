@@ -8,6 +8,7 @@ import "tr.js" as T
 KCM.SimpleKCM {
     property alias cfg_width: width.value
     property alias cfg_compact: compact.checked
+    property alias cfg_claudeStyle: claudeStyle.checked
 
     Kirigami.FormLayout {
         QQC2.SpinBox {
@@ -22,6 +23,11 @@ KCM.SimpleKCM {
             id: compact
             Kirigami.FormData.label: T.tr("Compact")
             text: T.tr("Percentages only, without the bars")
+        }
+        QQC2.CheckBox {
+            id: claudeStyle
+            Kirigami.FormData.label: T.tr("Look")
+            text: T.tr("Claude style: warm colours and a spark per session")
         }
     }
 }

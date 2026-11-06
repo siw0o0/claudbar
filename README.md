@@ -10,13 +10,15 @@ A KDE Plasma 6 panel widget that shows what your Claude Code sessions are doing:
 
 ## What it shows
 
-- **Dots**: one per session. Blue means working, orange (blinking) means waiting for you (a permission prompt, or a question the session asked), green means done. Finished sessions fade out after 5 minutes; the latest one stays.
+- **Sparks**: one per session, the current one larger. Clay (turning) means working, amber (blinking) means waiting for you (a permission prompt, or a question the session asked), sage means done. Finished sessions fade out after 5 minutes; the latest one stays. With the Claude style off they are plain dots: blue, orange and green.
 - **The session on the panel**: its name, state, and what it is doing (`working · 2 min · Bash: Run the tests`), context window usage and cost. By default it shows the most urgent session (waiting, then working, then the latest).
 - **Limits**: the plan's 5-hour and weekly usage with time to reset.
 - **A click on the bar**: while a session waits for you, it opens that chat in the Claude desktop app right away (the pinned session if it is the one waiting, else the latest waiting one). Otherwise it opens the list: also when Claude is in front and already shows that chat, or when the waiting session has no chat in the app (a terminal session).
 - **The list**: sessions active in the last 10 minutes, at least 3. Click a row to open that chat in the Claude desktop app (through its `claude://code/continue` link, handed straight to the running app, so it switches at once; terminal sessions have no chat to open). If the app is minimized, KWin brings its window back and focuses it. The buttons on the right of a row pin the session to the panel (click again to unpin) and give it a short name.
 
-**Settings** (right-click the widget, *Configure Claudbar…*): **Width** sets the bar's fixed width on the panel. It never goes below what the meters need; a wider bar shows more of what a session is doing, and the list follows it within limits. **Compact** hides the bars on the panel and keeps only the percentages (coloured when they pass 80%).
+**Settings** (right-click the widget, *Configure Claudbar…*): **Width** sets the bar's fixed width on the panel. It never goes below what the meters need; a wider bar shows more of what a session is doing, and the list follows it within limits. **Compact** hides the bars on the panel and keeps only the percentages (coloured when they pass 80%). **Look** switches the Claude style (on by default): a warm dark bar, sparks, a serif session name and clay and kraft accents; off, the bar follows the Plasma theme with plain dots.
+
+Panel Colorizer users: its widget text colour overrides Claudbar's colours. Add a global override for Claudbar with fallback turned off to keep them.
 
 Session names come from the conversation's title (its first meaningful word), or the project folder when there is no title yet.
 
