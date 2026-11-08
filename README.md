@@ -63,7 +63,7 @@ Right-click the widget and choose *Configure Claudbar…*
 - **Compact**: percentages only, without the bars.
 - **Look**: the Claude style (on by default) with a warm dark bar and list, sparks, serif session names and clay and kraft accents. Turned off, Claudbar follows your Plasma theme and shows plain blue, orange and green dots.
 
-Session names come from the conversation's title (its first meaningful word), or the project folder until there is a title.
+Session names come from the conversation's title (its first words on the bar, all of it in the list), or the project folder until there is a title.
 
 ## How it works
 

@@ -4,6 +4,7 @@
 var catalogs = {
     pl: {
         "No active session": "Brak aktywnej sesji",
+        "New conversation": "Nowa rozmowa",
         "no session": "bez sesji",
         "waiting for approval": "czeka na zgodę",
         "waiting for you": "czeka na ciebie",

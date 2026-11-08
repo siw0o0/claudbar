@@ -21,7 +21,11 @@ PlasmoidItem {
     property var files: []
     property var usage: null
     property real now: Date.now()
-    readonly property var alive: files.filter(s => s.state !== "ended" && now - s.at < 86400000)
+    // The desktop app keeps a spare process ready for the next conversation, in a folder named spare-*.
+    function isSpare(s) { return (s.project || "").indexOf("spare-") === 0; }
+    // One that never got a prompt is not a conversation, and the app may discard it without an end event.
+    function isUnused(s) { return isSpare(s) && s.state === "idle" && !s.title && !s.cost; }
+    readonly property var alive: files.filter(s => s.state !== "ended" && now - s.at < 86400000 && !isUnused(s))
     // Terminal sessions have no tray icon: working or waiting is enough for them.
     readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - s.at < 600000)
     readonly property var order: ({ waiting: 0, working: 1, idle: 2 })
@@ -43,14 +47,21 @@ PlasmoidItem {
     readonly property var limits: usage ? usage.limits : []
     readonly property real cost: sessions.reduce((sum, s) => sum + (s.cost || 0), 0)
 
-    // Shown name: a custom one from the popup, else the first meaningful word of the conversation title, else the project.
+    // Shown name: a custom one from the popup, else the conversation title, else the project.
+    // The bar has room for the title's first words only; the list shows all of it.
     readonly property var names: { try { return JSON.parse(Plasmoid.configuration.names); } catch (e) { return {}; } }
-    function titleWord(t) {
-        var words = (t || "").split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")).filter(w => w);
-        var w = words.find(w => w.length >= 4) || words[0] || "";
-        return w.charAt(0).toUpperCase() + w.slice(1);
+    function shortTitle(t) {
+        var words = (t || "").split(/\s+/).filter(w => w);
+        var kept = [];
+        for (var i = 0; i < words.length && (i === 0 || kept.concat(words[i]).join(" ").length <= 22); i++)
+            kept.push(words[i]);
+        // A title cut after "w" or "dla" reads as unfinished.
+        while (kept.length > 1 && /^\p{Ll}{1,3}$/u.test(kept[kept.length - 1])) kept.pop();
+        return kept.join(" ");
     }
-    function nameOf(s) { return names[s.id] || titleWord(s.title) || s.project; }
+    function projectName(s) { return isSpare(s) ? T.tr("New conversation") : s.project; }
+    function nameOf(s) { return names[s.id] || shortTitle(s.title) || projectName(s); }
+    function fullNameOf(s) { return names[s.id] || s.title || projectName(s); }
     function rename(id, text) {
         var map = Object.assign({}, names);
         var t = text.trim();
@@ -466,7 +477,7 @@ PlasmoidItem {
                         border.width: entry.pinned ? 1 : 0
                         border.color: root.claude ? root.sky : Kirigami.Theme.highlightColor
                     }
-                    PlasmaComponents3.ToolTip { text: entry.item.project + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
+                    PlasmaComponents3.ToolTip { text: root.projectName(entry.item) + " · " + root.modelName(entry.item.model); visible: entry.containsMouse && !edit.visible }
 
                     RowLayout {
                         anchors.fill: parent
@@ -480,18 +491,18 @@ PlasmoidItem {
                                 anchors.fill: parent
                                 visible: !edit.visible
                                 verticalAlignment: Text.AlignVCenter
-                                text: root.nameOf(entry.item)
+                                text: root.fullNameOf(entry.item)
                                 font.bold: !root.claude
                                 font.family: root.claude ? "serif" : Kirigami.Theme.defaultFont.family
                                 elide: Text.ElideRight
                             }
-                            // Custom name: Enter saves, Esc cancels, an empty field goes back to the title's word.
+                            // Custom name: Enter saves, Esc cancels, an empty field goes back to the title.
                             PlasmaComponents3.TextField {
                                 id: edit
                                 anchors.fill: parent
                                 anchors.topMargin: 1; anchors.bottomMargin: 1
                                 visible: false
-                                placeholderText: root.titleWord(entry.item.title) || entry.item.project || ""
+                                placeholderText: entry.item.title || root.projectName(entry.item) || ""
                                 onAccepted: { root.rename(entry.item.id, text); visible = false; }
                                 Keys.onEscapePressed: visible = false
                                 onActiveFocusChanged: if (!activeFocus) visible = false
