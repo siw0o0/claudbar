@@ -495,8 +495,11 @@ PlasmoidItem {
         readonly property real fit: Math.max(unit * 25, Math.min(root.barWidth, unit * 44))
         Layout.minimumWidth: fit
         Layout.maximumWidth: fit
+        // Exactly as tall as the list: without the maximum the popup keeps the height it had with
+        // more sessions, and the rows spread over it.
         Layout.minimumHeight: list.implicitHeight
         Layout.preferredHeight: list.implicitHeight
+        Layout.maximumHeight: list.implicitHeight
         // The Claude style paints the popup like the bar, over the dialog's own padding, with
         // cream text whatever the Plasma theme.
         Binding { target: popup.Kirigami.Theme; property: "textColor"; value: root.ink; when: root.claude }
@@ -510,7 +513,8 @@ PlasmoidItem {
 
         ColumnLayout {
             id: list
-            anchors.fill: parent
+            // Pinned to the top at its own height, so spare room never stretches the rows apart.
+            anchors { left: parent.left; right: parent.right; top: parent.top }
             spacing: Kirigami.Units.smallSpacing
 
             PlasmaComponents3.Label {
