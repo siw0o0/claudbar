@@ -1,0 +1,14 @@
+#!/bin/sh
+# Tryb grafiki w firmware: hybrid, igpu albo dgpu. Działa po restarcie.
+# Sterownik pokazuje stan z bieżącego startu, więc żądany tryb zapisujemy obok, razem z boot_id.
+set -e
+base=/sys/devices/platform/legion
+case "$1" in
+  hybrid) g=1; i=0 ;;
+  igpu) g=1; i=1 ;;
+  dgpu) g=0; i=0 ;;
+  *) echo "użycie: gpu-mode hybrid|igpu|dgpu" >&2; exit 2 ;;
+esac
+echo "$g" > "$base/gsync"
+echo "$i" > "$base/igpumode"
+echo "$1 $(cat /proc/sys/kernel/random/boot_id)" > /var/lib/gpu-mode-target

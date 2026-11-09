@@ -1,0 +1,95 @@
+#!/bin/bash
+# Proton VPN (CLI) domyślnie włączony wszędzie poza eduroam.
+# Wywoływany przez dispatcher NetworkManagera (przy zmianie sieci), autostart
+# (po zalogowaniu) i przełącznik w widżecie pulpitu.
+#
+#   protonvpn-auto          decyzja dla bieżącej sieci
+#   protonvpn-auto off      ręczne wyłączenie do następnej zmiany sieci
+#   protonvpn-auto on       ręczne włączenie (kasuje wyłączenie)
+#   protonvpn-auto select N przełączenie na VPN o nazwie N albo "Proton VPN"
+
+NOVPN_SSIDS="eduroam"
+OFF_FLAG="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/protonvpn-manual-off"
+
+log() { logger -t protonvpn-auto "$*"; }
+
+network() {
+  # Tożsamość bieżącej sieci: kabel po nazwie połączenia, Wi-Fi po SSID.
+  local wired ssid
+  wired=$(nmcli -t -f TYPE,NAME con show --active 2>/dev/null | awk -F: '$1=="802-3-ethernet"{print $2; exit}')
+  if [ -n "$wired" ]; then echo "ethernet:$wired"; return; fi
+  ssid=$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: '$1=="yes"{print $2; exit}')
+  [ -n "$ssid" ] && echo "wifi:$ssid"
+}
+
+is_connected() {
+  nmcli -t -f TYPE,DEVICE con show --active 2>/dev/null | grep -q '^wireguard:proton'
+}
+
+connect() { is_connected || { log "łączę VPN ($1)"; timeout 60 protonvpn connect >/dev/null 2>&1 || log "nie udało się połączyć"; }; }
+disconnect() { is_connected && { log "rozłączam VPN ($1)"; timeout 30 protonvpn disconnect >/dev/null 2>&1; }; }
+
+# Aktywne VPN-y z NetworkManagera inne niż Proton.
+others() {
+  nmcli -t -f TYPE,NAME con show --active 2>/dev/null | sed -n -E 's/^(vpn|wireguard)://p' | grep -v '^ProtonVPN' | sed 's/\\:/:/g'
+}
+# Rozłącza pozostałe VPN-y, z pominięciem podanego.
+drop_others() {
+  local c
+  while IFS= read -r c; do
+    [ "$c" = "$1" ] || { log "rozłączam $c"; nmcli con down id "$c" >/dev/null 2>&1; }
+  done < <(others)
+}
+
+net=$(network)
+
+case "$1" in
+  off)
+    echo "$net" > "$OFF_FLAG"
+    disconnect "ręcznie"
+    drop_others ""
+    exit 0
+    ;;
+  select)
+    rm -f "$OFF_FLAG"
+    if [ "$2" = "Proton VPN" ]; then
+      drop_others ""
+      connect "wybór"
+      is_connected
+      exit $?
+    fi
+    disconnect "wybór"
+    drop_others "$2"
+    log "łączę $2"
+    timeout 120 nmcli --wait 110 con up id "$2" >/dev/null 2>&1 && exit 0
+    # Nieudane połączenie nie może zostawić bez VPN-a: wraca zwykła decyzja dla sieci.
+    log "nie udało się połączyć z $2"
+    "$0"
+    exit 1
+    ;;
+  on)
+    rm -f "$OFF_FLAG"
+    connect "ręcznie"
+    exit 0
+    ;;
+esac
+
+[ -z "$net" ] && exit 0
+
+# Inny VPN wybrany ręcznie: Proton nie wchodzi mu w drogę, po zmianie sieci tamten i tak się rozłączy.
+[ -n "$(others)" ] && exit 0
+
+# Ręczne wyłączenie obowiązuje do zmiany sieci.
+if [ -f "$OFF_FLAG" ]; then
+  [ "$(cat "$OFF_FLAG")" = "$net" ] && exit 0
+  rm -f "$OFF_FLAG"
+fi
+
+if [[ "$net" == wifi:* ]]; then
+  ssid=$(echo "${net#wifi:}" | tr 'A-Z' 'a-z')
+  for s in $NOVPN_SSIDS; do
+    [ "$ssid" = "$s" ] && { disconnect "$net"; exit 0; }
+  done
+fi
+
+connect "$net"
