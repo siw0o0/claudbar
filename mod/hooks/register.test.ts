@@ -25,7 +25,8 @@ const engine = (on: On) => {
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('classic.Stop', () => ({}))
-  return () => JSON.parse(files.get(FILE) ?? '{}')
+  const state = () => JSON.parse(files.get(FILE) ?? '{}')
+  return Object.assign(state, { files })
 }
 
 test('a turn that leaves a background task waits for it', async ($, on) => {
@@ -81,4 +82,26 @@ test('an API error shows as failed, and subagents are counted', async ($, on) =>
   expect(state().agents).toBe(0)
   await $.turn.complete({ turnId: 't1', reason: 'error', answer: '', durationMs: 0, isAborted: false })
   expect(state().state).toBe('failed')
+})
+
+test('an idle session\'s old reading does not undo a newer one', async ($, on) => {
+  const { files } = engine(on)
+  const path = '/home/test/.cache/claudbar/usage.json'
+  const week = '2099-01-07T12:00:00.000Z'
+  const limit = (percentUsed: number, resetsAt = week) => ({ kind: 'seven_day', percentUsed, resetsAt })
+  const saved = () => JSON.parse(files.get(path) ?? '{}').limits[0].percent
+  const measure = (rateLimits: ReturnType<typeof limit>[]) =>
+    $.session.measure({ changed: ['rateLimits'], rateLimits } as unknown as Parameters<typeof $.session.measure>[0])
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+
+  await measure([limit(9)])
+  expect(saved()).toBe(9)
+  // Another session's last response was hours ago.
+  await measure([limit(6)])
+  expect(saved()).toBe(9)
+  await measure([limit(10)])
+  expect(saved()).toBe(10)
+  // The window reset: usage starts over.
+  await measure([limit(1, '2099-01-14T12:00:00.000Z')])
+  expect(saved()).toBe(1)
 })

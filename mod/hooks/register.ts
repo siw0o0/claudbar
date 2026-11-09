@@ -52,8 +52,16 @@ const cache = async ($: EngineInterface) => `${(await $.env.get('HOME')) ?? '/tm
 
 type Limit = { kind: string; percent: number; resetsAt: string | null }
 
-// The last reading of each window: a response may report only some of them.
-let known: Record<string, Limit> | null = null
+// Every session writes the one file, and an idle session only knows the reading of its own last
+// response. Within a window usage only grows, so a reading lower than the saved one for the same
+// window is an old one and is left out; a later reset means a new window, which starts over.
+const newer = (saved: Limit | undefined, read: Limit) => {
+  if (!saved) return read
+  const was = saved.resetsAt ? Date.parse(saved.resetsAt) : 0
+  const is = read.resetsAt ? Date.parse(read.resetsAt) : 0
+  if (Math.abs(is - was) < 60000) return read.percent >= saved.percent ? read : saved
+  return is > was ? read : saved
+}
 
 const saveLimits = async ($: EngineInterface, limits: readonly SessionRateLimit[]) => {
   // No reading yet (outside a subscription, or before the first response): keep the last file.
@@ -61,15 +69,14 @@ const saveLimits = async ($: EngineInterface, limits: readonly SessionRateLimit[
 
   const path = `${await cache($)}/usage.json`
   try {
-    if (!known) {
-      known = {}
-      try {
-        for (const l of (JSON.parse(await $.fs.read(path)) as { limits: Limit[] }).limits) known[l.kind] = l
-      } catch {
-        // No earlier file: start from this reading.
-      }
+    // A response may report only some of the windows: the rest stay as saved.
+    const known: Record<string, Limit> = {}
+    try {
+      for (const l of (JSON.parse(await $.fs.read(path)) as { limits: Limit[] }).limits) known[l.kind] = l
+    } catch {
+      // No earlier file: start from this reading.
     }
-    for (const l of limits) known[l.kind] = { kind: l.kind, percent: l.percentUsed, resetsAt: l.resetsAt ?? null }
+    for (const l of limits) known[l.kind] = newer(known[l.kind], { kind: l.kind, percent: l.percentUsed, resetsAt: l.resetsAt ?? null })
     // A window whose reset has passed starts over; drop it until a response reports it again.
     const now = await $.clock.now()
     const current = Object.values(known).filter(l => !l.resetsAt || Date.parse(l.resetsAt) > now)
