@@ -87,6 +87,10 @@ The plugin has tests: `claude plugin test mod`.
 - **Panel Colorizer** overrides the text colour of panel widgets. To keep Claudbar's colours, add a global override for Claudbar with fallback turned off.
 - **Languages**: English, and Polish when the system locale is Polish. Translations live in `plasmoid/contents/ui/tr.js`; a new language is one more catalog there.
 
+## See also
+
+[Wydma](https://github.com/siw0o0/wydma), a desktop widget for Plasma 6 that shows the same Claude limits next to a clock, system meters, power and VPN.
+
 ## Uninstall
 
 ```bash
