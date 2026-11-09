@@ -4,3 +4,5 @@ mod/.claude-plugin/types/
 *~
 *.swp
 *.log
+__pycache__/
+*.pyc

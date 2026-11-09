@@ -1,10 +1,12 @@
-import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
 // Claudbar's data side: each session writes its state to ~/.cache/claudbar/sessions/<id>.json
 // and the plan's rate limits to ~/.cache/claudbar/usage.json. The Plasma widget reads them.
 // Nothing here calls the model, so the mod costs no tokens.
 
-type State = 'idle' | 'working' | 'waiting' | 'ended'
+// pending: the turn is over, but background work (a shell, a subagent, a scheduled wake-up) will
+// start the next one by itself. failed: an API error or a refusal ended the turn.
+type State = 'idle' | 'working' | 'waiting' | 'pending' | 'failed' | 'ended'
 
 type Session = {
   id: string
@@ -17,6 +19,13 @@ type Session = {
   detail: string | null
   since: number
   at: number
+  // Rewritten every minute while the session is not idle: a process that died without an end
+  // event stops beating, and the widget drops it.
+  beat: number
+  // Subagents running now.
+  agents: number
+  // Background tasks and wake-ups a pending session waits for.
+  tasks: number
   context: number | null
   cost: number | null
 }
@@ -27,6 +36,14 @@ let session: Session | null = null
 // The turn put a question to the user (the desktop app's wrap-up box asks one), so when it ends
 // the session waits for an answer rather than being done.
 let asking = false
+
+// What the turn left running when it stopped: its description and how many there are.
+let held: { detail: string | null; tasks: number } | null = null
+
+// Subagents with a turn in progress.
+const agents = new Set<string>()
+
+let beat: Timer | null = null
 
 // Tools that stop the turn until the user answers.
 const questions = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -62,20 +79,40 @@ const saveLimits = async ($: EngineInterface, limits: readonly SessionRateLimit[
   }
 }
 
+const fileOf = async ($: EngineInterface, id: string) => `${await cache($)}/sessions/${id}.json`
+
 const base = async ($: EngineInterface): Promise<Session> => {
   if (session) return session
   const now = await $.clock.now()
   const cwd = await $.session.cwd()
+  const id = await $.session.id()
+  let restored: string | null = null
+  // A module reload starts over mid-session: the file carries on, so a finished session does not
+  // look freshly finished. Work in progress carries on only from a file this process was beating
+  // into moments ago; an older one is from an earlier process (a resume), whose state is history.
+  try {
+    const saved = JSON.parse(await $.fs.read(await fileOf($, id))) as Session
+    const fresh = now - (saved.beat ?? saved.at) < 120000 && saved.state !== 'ended'
+    if (saved.id === id && (fresh || saved.state === 'idle'))
+      return (session = { ...saved, agents: 0, tasks: saved.tasks ?? 0, beat: now })
+    // The conversation keeps its title across a resume, until the app sends it again.
+    if (saved.id === id) restored = saved.title ?? null
+  } catch {
+    // No file yet: a new session.
+  }
   session = {
-    id: await $.session.id(),
+    id,
     project: cwd.split('/').filter(Boolean).pop() ?? cwd,
-    title: null,
+    title: restored,
     model: await $.session.model(),
     state: 'idle',
     tool: null,
     detail: null,
     since: now,
     at: now,
+    beat: now,
+    agents: 0,
+    tasks: 0,
     context: null,
     cost: null,
   }
@@ -103,11 +140,53 @@ const mark = async ($: EngineInterface, change: Partial<Session>) => {
     const now = await $.clock.now()
     if (change.state && change.state !== s.state) s.since = now
     if ('tool' in change && !('detail' in change)) change = { ...change, detail: null }
-    Object.assign(s, change, { at: now })
-    await $.fs.write(`${await cache($)}/sessions/${s.id}.json`, JSON.stringify(s))
+    if (change.state && change.state !== 'pending') change = { ...change, tasks: 0 }
+    // `at` is the last thing the session did; a new reading of its context or cost is not one.
+    const acted = 'state' in change || 'tool' in change || 'title' in change || 'agents' in change
+    Object.assign(s, change, acted ? { at: now, beat: now } : { beat: now })
+    await $.fs.write(await fileOf($, s.id), JSON.stringify(s))
+    pulse($)
   } catch {
     // The widget keeps showing the previous state.
   }
+}
+
+// The heartbeat: only `beat` moves, so the widget's "active X ago" stays true.
+const pulse = ($: EngineInterface) => {
+  beat ??= $.clock.every(60000, async () => {
+    const s = session
+    if (!s || s.state === 'idle' || s.state === 'ended') return
+    try {
+      s.beat = await $.clock.now()
+      await $.fs.write(await fileOf($, s.id), JSON.stringify(s))
+    } catch {
+      // The next beat tries again.
+    }
+  })
+}
+
+const text = (v: unknown) => (typeof v === 'string' && v.trim() ? (v.trim().split('\n')[0] ?? '').slice(0, 120) : null)
+
+// Background work still in flight when the turn stops, and wake-ups scheduled for later.
+type Stopped = {
+  background_tasks?: { status: string; description: string; command?: string; name?: string; agent_type?: string }[]
+  session_crons?: { prompt: string }[]
+}
+const over = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled'])
+const leftRunning = (e: Stopped) => {
+  const tasks = (e.background_tasks ?? []).filter(t => !over.has(t.status))
+  const crons = e.session_crons ?? []
+  if (tasks.length + crons.length === 0) return null
+  const first = tasks[0]
+  const detail = first
+    ? (text(first.description) ?? text(first.name) ?? text(first.agent_type) ?? text(first.command))
+    : text(crons[0]?.prompt)
+  return { detail, tasks: tasks.length + crons.length }
+}
+
+// A subagent's turn started or ended: the count changes only then.
+const count = async ($: EngineInterface) => {
+  if (session && session.agents !== agents.size) await mark($, { agents: agents.size })
 }
 
 const measure = async ($: EngineInterface) => {
@@ -144,7 +223,18 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       asking = false
-      await mark($, { state: 'working', tool: null })
+      held = null
+      // Subagents of the turn before that never reported an end: start counting from those running.
+      try {
+        const running = new Set((await $.agent.list()).filter(a => a.status === 'running').map(a => a.id))
+        for (const id of agents) if (!running.has(id)) agents.delete(id)
+      } catch {
+        agents.clear()
+      }
+      await mark($, { state: 'working', tool: null, agents: agents.size })
+    } else {
+      agents.add(e.agentId)
+      await count($)
     }
     return next(e)
   })
@@ -153,9 +243,23 @@ export const register: Register = on => {
     const done = await next(e)
     if (e.agentId === undefined) {
       const question = e.reason === 'answer' && (asking || /\?\s*$/.test(e.answer))
-      await mark($, { state: question ? 'waiting' : 'idle', tool: null })
+      if (question) await mark($, { state: 'waiting', tool: null })
+      else if (e.reason === 'error' || e.reason === 'refusal') await mark($, { state: 'failed', tool: null })
+      else if (held) await mark($, { state: 'pending', tool: null, ...held })
+      else await mark($, { state: 'idle', tool: null })
+    } else {
+      agents.delete(e.agentId)
+      await count($)
     }
     return done
+  })
+
+  // The Stop event lists what the turn left in flight; it and turn.complete arrive in either
+  // order. A question to the user and a failed turn come before background work.
+  on('classic.Stop', async ($, e, next) => {
+    held = leftRunning(e)
+    if (held && session?.state === 'idle') await mark($, { state: 'pending', tool: null, ...held })
+    return next(e)
   })
 
   on('tool.call', async ($, e, next) => {

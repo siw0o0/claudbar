@@ -1,6 +1,7 @@
 import QtQuick
 
-// Session state mark: a dot, or in the Claude style a spark. Only a permission request blinks,
+// Session state mark: a dot, or in the Claude style a spark. A session waiting for a background
+// task is a hollow ring: nothing to do there yet. Only a permission request blinks,
 // and in steps: every blink repaints the whole panel, and a smooth animation would do that at
 // the display's refresh rate. For the same reason a working spark turns in steps.
 Item {
@@ -12,15 +13,21 @@ Item {
     property bool dim: false
     width: size; height: size
     readonly property color tint: spark
-        ? (mode === "waiting" ? "#e8a33d" : mode === "working" ? "#d97757" : "#8fae7e")
-        : (mode === "waiting" ? "#e8913a" : mode === "working" ? "#5aa3e0" : "#6fb07a")
+        ? (mode === "waiting" ? "#e8a33d" : mode === "failed" ? "#e05a4f" : mode === "working" ? "#d97757" : mode === "pending" ? "#8fa9c9" : "#8fae7e")
+        : (mode === "waiting" ? "#e8913a" : mode === "failed" ? "#e05a4f" : mode === "working" ? "#5aa3e0" : mode === "pending" ? "#a08ad0" : "#6fb07a")
     opacity: dim ? 0.35 : 1
 
-    Rectangle { anchors.fill: parent; radius: width / 2; color: dot.tint; visible: !dot.spark }
+    readonly property bool hollow: mode === "pending"
+    Rectangle {
+        anchors.fill: parent; anchors.margins: dot.hollow && dot.spark ? dot.size * 0.14 : 0
+        radius: width / 2; visible: !dot.spark || dot.hollow
+        color: dot.hollow ? "transparent" : dot.tint
+        border.width: dot.hollow ? Math.max(1.5, dot.size / 6) : 0; border.color: dot.tint
+    }
     Item {
         id: rays
         anchors.fill: parent
-        visible: dot.spark
+        visible: dot.spark && !dot.hollow
         Repeater {
             model: 8
             Rectangle {

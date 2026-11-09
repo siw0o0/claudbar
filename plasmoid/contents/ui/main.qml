@@ -7,6 +7,7 @@ import org.kde.plasma.plasma5support as P5Support
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.workspace.dbus as DBus
 import org.kde.taskmanager as TaskManager
+import org.kde.notification
 import QtCore
 import Qt.labs.folderlistmodel
 import "tr.js" as T
@@ -25,10 +26,13 @@ PlasmoidItem {
     function isSpare(s) { return (s.project || "").indexOf("spare-") === 0; }
     // One that never got a prompt is not a conversation, and the app may discard it without an end event.
     function isUnused(s) { return isSpare(s) && s.state === "idle" && !s.title && !s.cost; }
-    readonly property var alive: files.filter(s => s.state !== "ended" && now - s.at < 86400000 && !isUnused(s))
+    // The mod rewrites a busy session's file every minute; one that went quiet lost its process
+    // without an end event (a crash, a kill). Files from before the heartbeat have no such field.
+    function isGone(s) { return s.state !== "idle" && s.beat !== undefined && now - s.beat > 180000; }
+    readonly property var alive: files.filter(s => s.state !== "ended" && now - s.at < 86400000 && !isUnused(s) && !isGone(s))
     // Terminal sessions have no tray icon: working or waiting is enough for them.
-    readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - s.at < 600000)
-    readonly property var order: ({ waiting: 0, working: 1, idle: 2 })
+    readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - (s.beat || s.at) < 600000)
+    readonly property var order: ({ waiting: 0, failed: 1, working: 2, pending: 3, idle: 4 })
     readonly property var sessions: running ? alive.slice().sort((a, b) => (order[a.state] - order[b.state]) || (b.at - a.at)) : []
     // A session pinned in the list; otherwise the most urgent one (waiting, work, latest).
     property string picked: ""
@@ -43,8 +47,18 @@ PlasmoidItem {
         var fill = sessions.filter(s => recent.indexOf(s) < 0).sort((a, b) => b.at - a.at).slice(0, 3 - recent.length);
         return sessions.filter(s => recent.indexOf(s) >= 0 || fill.indexOf(s) >= 0);
     }
+    // The bar has room for a handful of dots: the most urgent ones, and always the current session's.
+    readonly property var dots: {
+        var top = shown.slice(0, 6);
+        if (lead && shown.indexOf(lead) >= 6) top[5] = lead;
+        return top;
+    }
     function pick(id) { picked = picked === id ? "" : id; }
     readonly property var limits: usage ? usage.limits : []
+    readonly property bool showCost: Plasmoid.configuration.showCost
+    // A laptop's screen has no room for the bars: the panel goes compact and narrower there.
+    readonly property bool small: Plasmoid.configuration.autoCompact && Screen.width < 2400
+    readonly property bool compactMode: Plasmoid.configuration.compact || small
     readonly property real cost: sessions.reduce((sum, s) => sum + (s.cost || 0), 0)
 
     // Shown name: a custom one from the popup, else the conversation title, else the project.
@@ -147,13 +161,21 @@ PlasmoidItem {
         onNewData: (source, data) => {
             disconnectSource(source);
             if (!source.startsWith("awk")) return;
-            var files = [], usage = root.usage;
+            var files = [], usage = root.usage, torn = false;
             String(data["stdout"]).split("\n").forEach(line => {
+                if (!line) return;
                 try {
                     var o = JSON.parse(line);
                     if (o.limits) usage = o; else if (o.id) files.push(o);
-                } catch (e) {}
+                } catch (e) { torn = true; }
             });
+            // A file caught halfway through a write: its session keeps the last reading, and the
+            // files are read again in a moment.
+            if (torn) {
+                root.files.forEach(old => { if (!files.some(s => s.id === old.id)) files.push(old); });
+                reread.restart();
+            }
+            root.announce(files);
             root.files = files;
             root.usage = usage;
             root.now = Date.now();
@@ -176,6 +198,27 @@ PlasmoidItem {
             if (source === root.fromPanel) root.fromPanel = "";
         }
     }
+    // A notification when a session starts waiting for the user or fails, unless Claude's window
+    // is in front. The first read only records the states: nothing is new then.
+    property var seen: null
+    Component { id: note; Notification { componentName: "plasma_workspace"; eventId: "notification"; iconName: "dialog-information"; autoDelete: true } }
+    function announce(files) {
+        var before = seen, next = {};
+        files.forEach(s => next[s.id] = s.state);
+        seen = next;
+        if (!before || !Plasmoid.configuration.notify || claudeInFront()) return;
+        files.forEach(s => {
+            if (before[s.id] === s.state || (s.state !== "waiting" && s.state !== "failed")) return;
+            var approval = s.state === "waiting" && s.tool && s.tool !== "AskUserQuestion" && s.tool !== "ExitPlanMode";
+            note.createObject(root, {
+                title: fullNameOf(s),
+                text: s.state === "failed" ? T.tr("The turn ended with an error")
+                    : approval ? T.tr("Claude needs your approval") + " · " + shortTool(s.tool) + (s.detail ? ": " + s.detail : "")
+                    : T.tr("Claude is waiting for you")
+            }).sendEvent();
+        });
+    }
+
     property string fromPanel: ""
     // If the opener never answers, the panel is not left waiting for it.
     Timer { interval: 5000; running: root.fromPanel !== ""; onTriggered: root.fromPanel = "" }
@@ -245,7 +288,12 @@ PlasmoidItem {
         var doing = s.tool ? " · " + shortTool(s.tool) + (s.detail ? ": " + s.detail : "") : "";
         if (s.state === "waiting") return s.tool && s.tool !== "AskUserQuestion" && s.tool !== "ExitPlanMode"
             ? T.tr("waiting for approval") + doing : T.tr("waiting for you");
-        if (s.state === "working") return T.tr("working") + " · " + span(now - s.since) + doing;
+        var team = s.agents > 0 ? " · " + T.tr("%1 agents", s.agents) : "";
+        if (s.state === "working") return T.tr("working") + " · " + span(now - s.since) + team + doing;
+        // The turn is over and a background task or a scheduled wake-up will start the next one.
+        if (s.state === "pending") return T.tr("waiting for a task") + " · " + span(now - s.since)
+            + (s.detail ? " · " + s.detail : "") + (s.tasks > 1 ? " +" + (s.tasks - 1) : "");
+        if (s.state === "failed") return T.tr("failed") + " · " + ago(now - s.since);
         return T.tr("done") + " · " + ago(now - s.since);
     }
     // mcp__server__tool → tool
@@ -279,7 +327,7 @@ PlasmoidItem {
         spacing: Kirigami.Units.smallSpacing
         PanelDim { text: parent.name }
         Bar {
-            visible: !Plasmoid.configuration.compact; Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+            visible: !root.compactMode; Layout.preferredWidth: Kirigami.Units.gridUnit * 4
             value: parent.value; color: root.level(parent.value, parent.tint)
             track: root.claude ? "#3d3b36" : Qt.rgba(1, 1, 1, 0.14)
         }
@@ -288,7 +336,7 @@ PlasmoidItem {
         PanelLabel {
             text: Math.round(parent.value) + "%"; font.bold: true; Layout.minimumWidth: Kirigami.Units.gridUnit * 1.6
             color: root.claude ? root.level(parent.value, parent.tint)
-                : Plasmoid.configuration.compact && parent.value >= 80 ? root.level(parent.value, Kirigami.Theme.textColor) : Kirigami.Theme.textColor
+                : root.compactMode && parent.value >= 80 ? root.level(parent.value, Kirigami.Theme.textColor) : Kirigami.Theme.textColor
         }
         // Fixed width, so a reset time getting shorter does not move what follows.
         PanelDim {
@@ -301,7 +349,7 @@ PlasmoidItem {
     // the meters need plus room for a session's dots, name and a few words of its state (minBar),
     // so nothing overlaps; a wider bar shows more of what the session is doing.
     property real minBar: 0
-    readonly property real barWidth: Math.max(Kirigami.Units.gridUnit * Plasmoid.configuration.width, minBar)
+    readonly property real barWidth: Math.max(Math.min(Kirigami.Units.gridUnit * Plasmoid.configuration.width, small ? Screen.width * 0.4 : Infinity), minBar)
 
     // Repeaters below count by index, so a read updates rows in place instead of rebuilding them.
     compactRepresentation: MouseArea {
@@ -314,7 +362,7 @@ PlasmoidItem {
         Layout.fillWidth: false
         hoverEnabled: true
         onClicked: root.activate()
-        Binding { target: root; property: "minBar"; value: gauges.implicitWidth + Kirigami.Units.gridUnit * 14 + compact.pad * 2 + Kirigami.Units.largeSpacing }
+        Binding { target: root; property: "minBar"; value: gauges.implicitWidth + marks.implicitWidth + Kirigami.Units.gridUnit * 11 + compact.pad * 2 + Kirigami.Units.largeSpacing }
 
         Rectangle {
             anchors.fill: parent
@@ -340,14 +388,18 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 spacing: Kirigami.Units.smallSpacing
+                // Whatever does not fit is cut here and never drawn over the meters.
+                clip: true
                 Row {
+                    id: marks
                     spacing: 1
+                    Layout.minimumWidth: implicitWidth
                     Repeater {
-                        model: root.shown.length
+                        model: root.dots.length
                         delegate: Item {
                             id: chip
                             required property int index
-                            readonly property var item: root.shown[index] || ({})
+                            readonly property var item: root.dots[index] || ({})
                             readonly property bool current: !!root.lead && item.id === root.lead.id
                             width: root.claude ? 18 : 15; height: width
                             // The Claude style marks the current session with a bigger spark instead of a ring.
@@ -386,14 +438,15 @@ PlasmoidItem {
                     font.pointSize: root.claude ? Kirigami.Theme.defaultFont.pointSize * 1.05 : Kirigami.Theme.smallFont.pointSize
                     elide: Text.ElideRight
                     Layout.maximumWidth: Kirigami.Units.gridUnit * 8
+                    Layout.minimumWidth: Math.min(implicitWidth, Kirigami.Units.gridUnit * 4)
                 }
                 PanelDim {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     elide: Text.ElideRight
                     text: root.lead ? root.stateText(root.lead) : T.tr("no session")
-                    color: root.lead && root.lead.state === "waiting" ? root.warn : root.claude ? "#a39e93" : Kirigami.Theme.textColor
-                    opacity: root.lead && root.lead.state === "waiting" || root.claude ? 1 : 0.65
+                    color: root.lead && root.lead.state === "waiting" ? root.warn : root.lead && root.lead.state === "failed" ? root.alert : root.claude ? "#a39e93" : Kirigami.Theme.textColor
+                    opacity: root.lead && (root.lead.state === "waiting" || root.lead.state === "failed") || root.claude ? 1 : 0.65
                 }
             }
             // Meters keep their natural width; the bar is never narrower than they need.
@@ -413,8 +466,9 @@ PlasmoidItem {
                     }
                 }
                 // Cost is priced as on the API; the panel shows the current session, the popup the total.
-                Divider { opacity: !!root.lead && root.lead.cost > 0 ? 0.18 : 0 }
+                Divider { visible: root.showCost; opacity: !!root.lead && root.lead.cost > 0 ? 0.18 : 0 }
                 PanelLabel {
+                    visible: root.showCost
                     opacity: !!root.lead && root.lead.cost > 0 ? 1 : 0; text: root.lead ? root.usd(root.lead.cost || 0) : ""; font.bold: true
                     color: root.claude ? root.sage : Kirigami.Theme.textColor
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 3.2; horizontalAlignment: Text.AlignRight
@@ -513,8 +567,8 @@ PlasmoidItem {
                             text: entry.item.state ? root.stateText(entry.item) : ""
                             elide: Text.ElideRight
                             font: Kirigami.Theme.smallFont
-                            color: entry.item.state === "waiting" ? root.warn : Kirigami.Theme.textColor
-                            opacity: entry.item.state === "waiting" ? 1 : 0.65
+                            color: entry.item.state === "waiting" ? root.warn : entry.item.state === "failed" ? root.alert : Kirigami.Theme.textColor
+                            opacity: entry.item.state === "waiting" || entry.item.state === "failed" ? 1 : 0.65
                         }
                         Bar {
                             Layout.preferredWidth: entry.unit * 2.2
@@ -530,6 +584,7 @@ PlasmoidItem {
                             color: root.claude ? root.level(entry.item.context || 0, root.dusk) : Kirigami.Theme.textColor
                         }
                         PlasmaComponents3.Label {
+                            visible: root.showCost
                             Layout.preferredWidth: entry.unit * 2.6
                             horizontalAlignment: Text.AlignRight
                             text: entry.item.cost ? root.usd(entry.item.cost) : ""

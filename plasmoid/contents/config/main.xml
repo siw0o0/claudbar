@@ -16,6 +16,18 @@
     <entry name="claudeStyle" type="Bool">
       <default>true</default>
     </entry>
+    <!-- On a small screen (a laptop's) the panel turns compact by itself and takes less of it. -->
+    <entry name="autoCompact" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- The session's cost, priced as on the API: on a subscription it is only a rough measure. -->
+    <entry name="showCost" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- A desktop notification when a session starts waiting for the user or fails. -->
+    <entry name="notify" type="Bool">
+      <default>true</default>
+    </entry>
     <!-- Fixed width of the bar on the panel, in grid units: it does not change with its content. -->
     <entry name="width" type="Int">
       <default>44</default>

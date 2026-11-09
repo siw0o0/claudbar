@@ -9,6 +9,9 @@ KCM.SimpleKCM {
     property alias cfg_width: width.value
     property alias cfg_compact: compact.checked
     property alias cfg_claudeStyle: claudeStyle.checked
+    property alias cfg_autoCompact: autoCompact.checked
+    property alias cfg_showCost: showCost.checked
+    property alias cfg_notify: notify.checked
 
     Kirigami.FormLayout {
         QQC2.SpinBox {
@@ -23,6 +26,20 @@ KCM.SimpleKCM {
             id: compact
             Kirigami.FormData.label: T.tr("Compact")
             text: T.tr("Percentages only, without the bars")
+        }
+        QQC2.CheckBox {
+            id: autoCompact
+            text: T.tr("Compact by itself on a small screen")
+        }
+        QQC2.CheckBox {
+            id: showCost
+            Kirigami.FormData.label: T.tr("Cost")
+            text: T.tr("Show what the session would cost on the API")
+        }
+        QQC2.CheckBox {
+            id: notify
+            Kirigami.FormData.label: T.tr("Notifications")
+            text: T.tr("Notify when a session waits for you or fails")
         }
         QQC2.CheckBox {
             id: claudeStyle
