@@ -33,6 +33,8 @@ var catalogs = {
         "Pin to the panel": "Przypnij na pasku",
         "Unpin from the panel": "Odepnij z paska",
         "Rename": "Zmień nazwę",
+        "Clear": "Wyczyść",
+        "Hide finished sessions; those still going stay": "Ukrywa zakończone sesje; trwające zostają",
         "Compact": "Kompaktowy",
         "Look": "Wygląd",
         "Claude style: warm colours and a spark per session": "Styl Claude: ciepłe kolory i iskierka dla każdej sesji"

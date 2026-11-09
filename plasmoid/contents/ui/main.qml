@@ -33,7 +33,17 @@ PlasmoidItem {
     // Terminal sessions have no tray icon: working or waiting is enough for them.
     readonly property bool running: tray.registered || alive.some(s => s.state !== "idle" && now - (s.beat || s.at) < 600000)
     readonly property var order: ({ waiting: 0, failed: 1, working: 2, pending: 3, idle: 4 })
-    readonly property var sessions: running ? alive.slice().sort((a, b) => (order[a.state] - order[b.state]) || (b.at - a.at)) : []
+    // Clearing the list hides the sessions finished by then. Those still going stay, and with none
+    // of them the latest finished one does; a cleared session comes back when it does something.
+    readonly property real clearedAt: Number(Plasmoid.configuration.clearedAt) || 0
+    readonly property var sessions: {
+        if (!running) return [];
+        var all = alive.slice().sort((a, b) => (order[a.state] - order[b.state]) || (b.at - a.at));
+        var kept = all.filter(s => s.state !== "idle" || s.since > clearedAt);
+        return kept.length ? kept : all.slice(0, 1);
+    }
+    readonly property bool canClear: sessions.filter(s => s.state === "idle").length > (sessions.some(s => s.state !== "idle") ? 0 : 1)
+    function clear() { Plasmoid.configuration.clearedAt = String(Date.now()); }
     // A session pinned in the list; otherwise the most urgent one (waiting, work, latest).
     property string picked: ""
     readonly property var lead: sessions.find(s => s.id === picked) || (sessions.length ? sessions[0] : null)
@@ -635,6 +645,19 @@ PlasmoidItem {
                     }
                     PlasmaComponents3.Label { text: root.resetIn(item); Layout.preferredWidth: Kirigami.Units.gridUnit * 4.2; font: Kirigami.Theme.smallFont; opacity: 0.6 }
                 }
+            }
+            // Bottom right: clears the finished sessions off the list and the bar.
+            PlasmaComponents3.ToolButton {
+                Layout.alignment: Qt.AlignRight
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.4
+                visible: root.canClear
+                icon.name: "edit-clear-history"
+                icon.width: Kirigami.Units.iconSizes.small; icon.height: Kirigami.Units.iconSizes.small
+                text: T.tr("Clear")
+                font: Kirigami.Theme.smallFont
+                opacity: hovered ? 1 : 0.7
+                onClicked: root.clear()
+                PlasmaComponents3.ToolTip { text: T.tr("Hide finished sessions; those still going stay") }
             }
         }
     }

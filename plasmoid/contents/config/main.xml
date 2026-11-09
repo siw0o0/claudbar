@@ -28,6 +28,10 @@
     <entry name="notify" type="Bool">
       <default>true</default>
     </entry>
+    <!-- When the list was last cleared (ms since the epoch): sessions finished before it are hidden. -->
+    <entry name="clearedAt" type="String">
+      <default>0</default>
+    </entry>
     <!-- Fixed width of the bar on the panel, in grid units: it does not change with its content. -->
     <entry name="width" type="Int">
       <default>44</default>

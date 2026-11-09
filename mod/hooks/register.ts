@@ -257,6 +257,8 @@ export const register: Register = on => {
   // The Stop event lists what the turn left in flight; it and turn.complete arrive in either
   // order. A question to the user and a failed turn come before background work.
   on('classic.Stop', async ($, e, next) => {
+    // Only the main loop's stop decides the session's state.
+    if ((e as { agent_id?: string }).agent_id) return next(e)
     held = leftRunning(e)
     if (held && session?.state === 'idle') await mark($, { state: 'pending', tool: null, ...held })
     return next(e)

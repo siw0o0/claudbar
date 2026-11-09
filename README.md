@@ -22,7 +22,7 @@ A click on the bar opens the list of recent sessions and your limits:
 - **Notifications.** A desktop notification when a session starts waiting for you or fails while Claude's window is not in front.
 - **Plan limits.** The 5-hour and weekly usage, with the time until each resets. Values turn amber past 80% and red past 95%.
 - **One click to the chat.** While a session waits, a click on the bar opens that chat in the Claude desktop app, bringing the window back if it was minimized.
-- **The session list.** Sessions from the last 10 minutes (at least 3). Click a row to open its chat, pin a session to the bar, or give it a short name.
+- **The session list.** Sessions from the last 10 minutes (at least 3). Click a row to open its chat, pin a session to the bar, or give it a short name. *Clear* hides the finished ones; sessions still going stay, and so does the latest one when nothing is going.
 - **Out of the way.** The widget hides while Claude is closed and takes no space on the panel.
 
 ## Install
